@@ -10,8 +10,6 @@ public static class EnvConfig
     static EnvConfig()
     {
         _vars = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-
-        // Look in project root or Application.dataPath parent
         string rootPath = Directory.GetParent(Application.dataPath).FullName;
         string envPath = Path.Combine(rootPath, ".env");
 
