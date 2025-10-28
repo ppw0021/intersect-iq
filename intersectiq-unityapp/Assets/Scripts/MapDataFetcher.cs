@@ -32,6 +32,11 @@ public class MapDataFetcher : MonoBehaviour
         StartCoroutine(LoadMapToRawImage(lat, lon));
     }
 
+    public void ResetRawImage()
+    {
+        mapImage.texture = null;
+    }
+
     public IEnumerator LoadMapToRawImage(double lat, double lon)
     {
         var url = BuildStaticMapUrl(lat, lon, zoom, rawImageWidth, rawImageHeight, apiKey);

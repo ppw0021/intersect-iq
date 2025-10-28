@@ -4,7 +4,7 @@ using UnityEngine.UI;
 public class StartScreenNavigator : MonoBehaviour
 {
     private MapDataFetcher fetcher;
-    
+
     // Panels
     [Header("Panels")]
     [SerializeField] GameObject startMenu;
@@ -15,7 +15,7 @@ public class StartScreenNavigator : MonoBehaviour
     [Header("Start Menu")]
     [SerializeField] Button startMenu_newSaveButton;
     [SerializeField] Button startMenu_openSaveButton;
-    
+
     // Select Save Menu
     [Header("Select Save Menu")]
     [SerializeField] Button selectSaveMenu_returnButton;
@@ -23,9 +23,10 @@ public class StartScreenNavigator : MonoBehaviour
 
     // New Save Menu
     [Header("New Save Menu")]
-    [SerializeField] Text newSaveMenu_latEntry;
-    [SerializeField] Text newSaveMenu_longEntry;
+    [SerializeField] InputField newSaveMenu_latEntry;
+    [SerializeField] InputField newSaveMenu_longEntry;
     [SerializeField] Button newSaveMenu_searchButton;
+    [SerializeField] Text newSaveMenu_errorMessage;
     [SerializeField] Button newSaveMenu_returnButton;
     [SerializeField] Button newSaveMenu_continueButton;
 
@@ -69,8 +70,13 @@ public class StartScreenNavigator : MonoBehaviour
         startMenu.SetActive(true);
         selectSaveMenu.SetActive(false);
         // Reset select save menu
+        newSaveMenu_errorMessage.text = "";
+        newSaveMenu_latEntry.text = "";
+        newSaveMenu_longEntry.text = "";
+        newSaveMenu_continueButton.interactable = false;
+        fetcher.ResetRawImage();
     }
-    
+
     void selectSaveMenu_ContinueButtonClicked()
     {
         // Load next scene
@@ -89,14 +95,20 @@ public class StartScreenNavigator : MonoBehaviour
         // Validate latitude
         if (!validLat || latitude < -90.0 || latitude > 90.0)
         {
+            newSaveMenu_errorMessage.text = "Invalid Coordinates";
             Debug.LogWarning($"Invalid latitude: {latText}. Must be a number between -90 and 90.");
+            fetcher.ResetRawImage();
+            newSaveMenu_continueButton.interactable = false;
             return;
         }
 
         // Validate longitude
         if (!validLon || longitude < -180.0 || longitude > 180.0)
         {
+            newSaveMenu_errorMessage.text = "Invalid Coordinates";
             Debug.LogWarning($"Invalid longitude: {lonText}. Must be a number between -180 and 180.");
+            fetcher.ResetRawImage();
+            newSaveMenu_continueButton.interactable = false;
             return;
         }
 
@@ -107,6 +119,7 @@ public class StartScreenNavigator : MonoBehaviour
         if (fetcher != null)
         {
             fetcher.SetMapToRawImage(latitude, longitude);
+            newSaveMenu_continueButton.interactable = true;
         }
         else
         {
@@ -117,10 +130,15 @@ public class StartScreenNavigator : MonoBehaviour
     void newSaveMenu_ReturnButtonClicked()
     {
         startMenu.SetActive(true);
-        newSaveMenu.SetActive(false);
         // reset map and entry field here
+        newSaveMenu_errorMessage.text = "";
+        newSaveMenu_latEntry.text = "";
+        newSaveMenu_longEntry.text = "";
+        newSaveMenu_continueButton.interactable = false;
+        fetcher.ResetRawImage();
+        newSaveMenu.SetActive(false);
     }
-    
+
     void newSaveMenu_ContinueButtonClicked()
     {
         // Load next scene
