@@ -1,24 +1,54 @@
 using UnityEngine;
 using UnityEngine.Networking;
 using System.Collections;
+using UnityEngine.UI;
 
 public class MapDataFetcher : MonoBehaviour
 {
     [Header("Target Mesh")]
     [SerializeField] Renderer mapRenderer;
+    [SerializeField] RawImage mapImage;
     [Header("Google")]
     [SerializeField] string apiKey;
     [Range(0, 21)] public int zoom = 18;
+    // width and height for renderer
     public int width = 512, height = 512;
+    // width and height for raw image
+    public int rawImageWidth = 512, rawImageHeight = 512;
 
     void Awake()
     {
         apiKey = EnvConfig.Get("GOOGLE_MAPS_API_KEY");
         if (string.IsNullOrEmpty(apiKey)) Debug.LogError("Google Maps API key missing from .env");
-        StartCoroutine(LoadMap(-36.9198, 174.91297));
     }
 
-    IEnumerator LoadMap(double lat, double lon)
+    public void SetMapToRenderer(double lat, double lon)
+    {
+        StartCoroutine(LoadMapToRenderer(lat, lon));
+    }
+
+    public void SetMapToRawImage(double lat, double lon)
+    {
+        StartCoroutine(LoadMapToRawImage(lat, lon));
+    }
+
+    public IEnumerator LoadMapToRawImage(double lat, double lon)
+    {
+        var url = BuildStaticMapUrl(lat, lon, zoom, rawImageWidth, rawImageHeight, apiKey);
+        using var req = UnityWebRequestTexture.GetTexture(url);
+        yield return req.SendWebRequest();
+
+        if (req.result != UnityWebRequest.Result.Success)
+        {
+            Debug.LogError("Map fetch failed: " + req.error);
+            yield break;
+        }
+        var tex = DownloadHandlerTexture.GetContent(req);
+        mapImage.texture = tex;
+        // mapImage.SetNativeSize(); // optional
+    }
+
+    IEnumerator LoadMapToRenderer(double lat, double lon)
     {
         var url = BuildStaticMapUrl(lat, lon, zoom, width, height, apiKey);
         using var req = UnityWebRequestTexture.GetTexture(url);
@@ -69,16 +99,13 @@ public class MapDataFetcher : MonoBehaviour
     string BuildStaticMapUrl(double lat, double lon, int zoom, int width, int height, string apiKey)
     {
         string style =
-            "&style=feature:all|element:labels|visibility:off" +
-            "&style=feature:administrative|visibility:off" +
+            "&style=feature:all|element:labels.text|visibility:off" +
             "&style=feature:poi|visibility:off" +
-            "&style=feature:landscape|visibility:off" +
-            "&style=feature:transit|visibility:off" +
-            "&style=feature:water|visibility:off" +
-            "&style=feature:road|visibility:on|color:0xffffff";
+            "&style=feature:transit|visibility:off";
 
         return $"https://maps.googleapis.com/maps/api/staticmap" +
                $"?center={lat},{lon}&zoom={zoom}&size={width}x{height}&scale=2&maptype=roadmap" +
                $"{style}&key={apiKey}";
     }
+
 }
