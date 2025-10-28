@@ -1,5 +1,7 @@
 using UnityEngine;
 using UnityEngine.UI;
+using UnityEngine.SceneManagement;
+
 
 public class StartScreenNavigator : MonoBehaviour
 {
@@ -29,6 +31,9 @@ public class StartScreenNavigator : MonoBehaviour
     [SerializeField] Text newSaveMenu_errorMessage;
     [SerializeField] Button newSaveMenu_returnButton;
     [SerializeField] Button newSaveMenu_continueButton;
+
+    private double mapSetLatitude;
+    private double mapSetLongitude;
 
     void Start()
     {
@@ -118,7 +123,9 @@ public class StartScreenNavigator : MonoBehaviour
         // Trigger map fetch if available
         if (fetcher != null)
         {
-            fetcher.SetMapToRawImage(latitude, longitude);
+            mapSetLatitude = latitude;
+            mapSetLongitude = longitude;
+            fetcher.SetMapToRawImage(latitude, longitude, 0);
             newSaveMenu_continueButton.interactable = true;
         }
         else
@@ -142,5 +149,7 @@ public class StartScreenNavigator : MonoBehaviour
     void newSaveMenu_ContinueButtonClicked()
     {
         // Load next scene
+        SceneParameters.SetCurrentCoords(mapSetLatitude, mapSetLongitude);
+        SceneManager.LoadScene("IntersectionEditorScene");
     }
 }

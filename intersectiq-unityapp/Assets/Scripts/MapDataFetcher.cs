@@ -22,14 +22,14 @@ public class MapDataFetcher : MonoBehaviour
         if (string.IsNullOrEmpty(apiKey)) Debug.LogError("Google Maps API key missing from .env");
     }
 
-    public void SetMapToRenderer(double lat, double lon)
+    public void SetMapToRenderer(double lat, double lon, int mapStyle)
     {
-        StartCoroutine(LoadMapToRenderer(lat, lon));
+        StartCoroutine(LoadMapToRenderer(lat, lon, mapStyle));
     }
 
-    public void SetMapToRawImage(double lat, double lon)
+    public void SetMapToRawImage(double lat, double lon, int mapStyle)
     {
-        StartCoroutine(LoadMapToRawImage(lat, lon));
+        StartCoroutine(LoadMapToRawImage(lat, lon, mapStyle));
     }
 
     public void ResetRawImage()
@@ -37,9 +37,9 @@ public class MapDataFetcher : MonoBehaviour
         mapImage.texture = null;
     }
 
-    public IEnumerator LoadMapToRawImage(double lat, double lon)
+    public IEnumerator LoadMapToRawImage(double lat, double lon, int mapStyle)
     {
-        var url = BuildStaticMapUrl(lat, lon, zoom, rawImageWidth, rawImageHeight, apiKey);
+        var url = BuildStaticMapUrl(mapStyle, lat, lon, zoom, rawImageWidth, rawImageHeight, apiKey);
         using var req = UnityWebRequestTexture.GetTexture(url);
         yield return req.SendWebRequest();
 
@@ -53,9 +53,9 @@ public class MapDataFetcher : MonoBehaviour
         // mapImage.SetNativeSize(); // optional
     }
 
-    IEnumerator LoadMapToRenderer(double lat, double lon)
+    IEnumerator LoadMapToRenderer(double lat, double lon, int mapStyle)
     {
-        var url = BuildStaticMapUrl(lat, lon, zoom, width, height, apiKey);
+        var url = BuildStaticMapUrl(mapStyle, lat, lon, zoom, width, height, apiKey);
         using var req = UnityWebRequestTexture.GetTexture(url);
         yield return req.SendWebRequest();
 
@@ -65,19 +65,36 @@ public class MapDataFetcher : MonoBehaviour
             yield break;
         }
 
+        // Get the downloaded texture
         var tex = DownloadHandlerTexture.GetContent(req);
 
-        // Ensure we have a material instance and an unlit shader so lighting doesn't darken the map
-        var mat = mapRenderer.material; // instanced at runtime
-        if (mat.shader == null || mat.shader.name != "Unlit/Texture")
-            mat.shader = Shader.Find("Unlit/Texture");
+        // Convert black pixels to transparent
+        Color[] pixels = tex.GetPixels();
+        for (int i = 0; i < pixels.Length; i++)
+        {
+            // Adjust threshold if needed (0.05 is good for near-black)
+            if (pixels[i].r < 0.05f && pixels[i].g < 0.05f && pixels[i].b < 0.05f)
+                pixels[i].a = 0f;
+        }
+        tex.SetPixels(pixels);
+        tex.Apply();
 
+        // Ensure we have a material instance and an unlit transparent shader
+        var mat = mapRenderer.material; // instanced at runtime
+        var transparentShader = Shader.Find("Unlit/Transparent");
+        if (transparentShader != null)
+            mat.shader = transparentShader;
+        else
+            mat.shader = Shader.Find("Unlit/Texture"); // fallback
+
+        // Apply texture to the material
         mat.mainTexture = tex;
         mat.mainTextureScale = Vector2.one;
         mat.mainTextureOffset = Vector2.zero;
 
         FitMeshToTextureAspect(tex);
     }
+
 
     void FitMeshToTextureAspect(Texture2D tex)
     {
@@ -101,13 +118,37 @@ public class MapDataFetcher : MonoBehaviour
         }
     }
 
-    string BuildStaticMapUrl(double lat, double lon, int zoom, int width, int height, string apiKey)
+    string BuildStaticMapUrl(int mapStyle, double lat, double lon, int zoom, int width, int height, string apiKey)
     {
-        string style =
+        string style;
+
+        if (mapStyle == 0)
+        {
+            style =
             "&style=feature:all|element:labels.text|visibility:off" +
             "&style=feature:poi|visibility:off" +
             "&style=feature:transit|visibility:off";
-
+        }
+        else if (mapStyle == 1)
+        {
+            // transparent and white
+            style =
+            "&style=feature:all|element:labels|visibility:off" +
+            // "&style=feature:administrative|visibility:off" +
+            "&style=feature:poi|visibility:off" +
+            "&style=feature:landscape|visibility:off" +
+            // "&style=feature:transit|visibility:off" +
+            "&style=feature:water|visibility:off" +
+            "&style=feature:road|visibility:on|color:0xffffff";
+        }
+        else
+        {
+            // default
+            style =
+            "&style=feature:all|element:labels.text|visibility:off" +
+            "&style=feature:poi|visibility:off" +
+            "&style=feature:transit|visibility:off";
+        }
         return $"https://maps.googleapis.com/maps/api/staticmap" +
                $"?center={lat},{lon}&zoom={zoom}&size={width}x{height}&scale=2&maptype=roadmap" +
                $"{style}&key={apiKey}";
