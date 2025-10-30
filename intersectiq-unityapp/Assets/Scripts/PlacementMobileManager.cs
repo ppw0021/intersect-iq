@@ -1,11 +1,16 @@
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
-
+// Checks for legacy input system
+#if ENABLE_INPUT_SYSTEM && !ENABLE_LEGACY_INPUT_MANAGER
+using UnityEngine.InputSystem;
+#endif
 public class PlacementMobileManager : MonoBehaviour
 {
     [Header("Surface")]
     public Transform gridSurface;
+    [Header("Placement Height")]
+    [SerializeField] private float heightOffset = 0f;
 
     [Header("Grid")]
     public int gridWidth = 6;
@@ -21,11 +26,8 @@ public class PlacementMobileManager : MonoBehaviour
     public Material invalidMaterial;
 
     [Header("Ghost Pulse")]
-    [Tooltip("Min alpha when pulsing (0..1).")]
     public float pulseMinAlpha = 0.20f;
-    [Tooltip("Max alpha when pulsing (0..1).")]
-    public float pulseMaxAlpha = 0.75f; // ~75% opaque
-    [Tooltip("How fast the sine pulse runs.")]
+    public float pulseMaxAlpha = 0.75f;
     public float pulseSpeed = 2.0f;
 
     [Header("Physics / Blocking")]
@@ -42,14 +44,14 @@ public class PlacementMobileManager : MonoBehaviour
     public Button cancelButton;
 
     [Header("Center Piece (N x N)")]
-    [SerializeField] Button placeCenterButton;          // UI button to start center placement
-    [SerializeField] GameObject centerSizePromptPanel;  // Panel with InputField + OK/Cancel
-    [SerializeField] InputField centerSizeInput;        // Unity UI InputField (or TMP_InputField with small change)
+    [SerializeField] Button placeCenterButton;
+    [SerializeField] GameObject centerSizePromptPanel;
+    [SerializeField] InputField centerSizeInput;
     [SerializeField] Button centerSizeOkButton;
     [SerializeField] Button centerSizeCancelButton;
-    [SerializeField] GameObject centerPrefab;           // Prefab for the intersection center
+    [SerializeField] GameObject centerPrefab;
 
-    // Variables
+    // Runtime State    
     private Camera cam;
     private Renderer surfaceRenderer;
     private Bounds surfaceBounds;
@@ -60,16 +62,16 @@ public class PlacementMobileManager : MonoBehaviour
     private int currentIndex = -1;
 
     private bool isPlacing = false;
-    private bool[,] occupied; // gridWidth x gridHeight, 1x1 occupancy baseline
+    private bool[,] occupied; // gridWidth x gridHeight
 
     // current ghost state (grid coords + rotation)
-    private int gx, gz;        // top-left grid cell of the footprint
-    private float yaw;         // 0,90,180,270
+    private int gx, gz;        // top-left cell for current footprint
+    private float yaw;         // 0/90/180/270
 
     // Ghost visuals/material bookkeeping
     private List<Renderer> ghostRenderers = new List<Renderer>();
-    private List<Material[]> ghostValidMats = new List<Material[]>();    // per-renderer material arrays (instances of ghostMaterial)
-    private List<Material[]> ghostInvalidMats = new List<Material[]>();  // per-renderer material arrays (instances of invalidMaterial)
+    private List<Material[]> ghostValidMats = new List<Material[]>();
+    private List<Material[]> ghostInvalidMats = new List<Material[]>();
     private bool lastValid = false;
     private bool usingInvalidLook = false;
 
@@ -81,7 +83,6 @@ public class PlacementMobileManager : MonoBehaviour
     private bool centerPlaced = false;
     private bool currentIsCenter = false;
 
-    // For scaling ghosts relative to their authored size
     private Vector3 ghostBaseScale = Vector3.one;
 
     void Awake()
@@ -91,15 +92,13 @@ public class PlacementMobileManager : MonoBehaviour
         if (!gridSurface)
         {
             Debug.LogError("Assign gridSurface.");
-            enabled = false;
-            return;
+            enabled = false; return;
         }
         surfaceRenderer = gridSurface.GetComponentInChildren<Renderer>();
         if (!surfaceRenderer)
         {
             Debug.LogError("gridSurface needs a Renderer.");
-            enabled = false;
-            return;
+            enabled = false; return;
         }
 
         surfaceBounds = surfaceRenderer.bounds;
@@ -109,26 +108,20 @@ public class PlacementMobileManager : MonoBehaviour
 
         WireButtons(false);
 
-        // Wire Center UI
-        if (placeCenterButton)
-            placeCenterButton.onClick.AddListener(OnPlaceCenterClicked);
-
-        if (centerSizeOkButton)
-            centerSizeOkButton.onClick.AddListener(OnCenterSizeOk);
-
-        if (centerSizeCancelButton)
-            centerSizeCancelButton.onClick.AddListener(() =>
-            {
-                if (centerSizePromptPanel) centerSizePromptPanel.SetActive(false);
-            });
-
+        // Center UI
+        if (placeCenterButton) placeCenterButton.onClick.AddListener(OnPlaceCenterClicked);
+        if (centerSizeOkButton) centerSizeOkButton.onClick.AddListener(OnCenterSizeOk);
+        if (centerSizeCancelButton) centerSizeCancelButton.onClick.AddListener(() =>
+        {
+            if (centerSizePromptPanel) centerSizePromptPanel.SetActive(false);
+        });
         if (centerSizePromptPanel) centerSizePromptPanel.SetActive(false);
         if (placeCenterButton) placeCenterButton.interactable = !centerPlaced;
     }
 
     void Update()
     {
-        // Pulse only while placing, ghost exists, and the current state is valid
+        // Pulse only while placing, ghost exists, and valid
         if (isPlacing && ghostInstance && lastValid && !usingInvalidLook)
         {
             float t = (Mathf.Sin(Time.time * pulseSpeed) + 1f) * 0.5f; // 0..1
@@ -137,9 +130,9 @@ public class PlacementMobileManager : MonoBehaviour
         }
     }
 
+    // Buttons
     void WireButtons(bool enable)
     {
-        // Clear previous listeners
         upButton?.onClick.RemoveAllListeners();
         downButton?.onClick.RemoveAllListeners();
         leftButton?.onClick.RemoveAllListeners();
@@ -155,15 +148,13 @@ public class PlacementMobileManager : MonoBehaviour
         leftButton?.onClick.AddListener(() => Nudge(-1, 0));
         rightButton?.onClick.AddListener(() => Nudge(+1, 0));
         rotateButton?.onClick.AddListener(RotateGhost);
-
         confirmButton?.onClick.AddListener(ConfirmPlacement);
         cancelButton?.onClick.AddListener(CancelPlacement);
 
         SetControlsVisible(true);
     }
 
-    // === PUBLIC ===
-    // Select Prefab Function (normal 1x1 items)
+    // Placements
     public void SelectPrefabByIndex(int index)
     {
         if (index < 0 || index >= placeablePrefabs.Count)
@@ -174,29 +165,22 @@ public class PlacementMobileManager : MonoBehaviour
 
         currentIndex = index;
         currentPrefab = placeablePrefabs[index];
-        BeginPlacement(); // normal 1x1
+        BeginPlacement(); // 1x1
     }
 
-    // === CENTER PIECE FLOW ===
+    // Flow
     void OnPlaceCenterClicked()
     {
-        if (centerPlaced)
-        {
-            Debug.Log("Center already placed.");
-            return;
-        }
-
+        if (centerPlaced) { Debug.Log("Center already placed."); return; }
         if (centerSizePromptPanel) centerSizePromptPanel.SetActive(true);
-        if (centerSizeInput) centerSizeInput.text = "2"; // default
+        if (centerSizeInput) centerSizeInput.text = "2";
     }
 
     void OnCenterSizeOk()
     {
         if (centerSizeInput == null) return;
-
         if (!int.TryParse(centerSizeInput.text, out int n)) n = 1;
         n = Mathf.Clamp(n, 1, Mathf.Min(gridWidth, gridHeight));
-
         centerSizePromptPanel?.SetActive(false);
 
         if (centerPrefab == null)
@@ -207,79 +191,72 @@ public class PlacementMobileManager : MonoBehaviour
         BeginPlacementCenter(n);
     }
 
-    // Begin Placement Function (normal 1x1)
+    // Begin end cancel
     void BeginPlacement()
     {
         isPlacing = true;
-
         currentIsCenter = false;
-        footprintW = 1;
-        footprintH = 1;
+        footprintW = footprintH = 1;
 
         CreateGhost(currentPrefab);
 
-        // Start centered on the grid
         gx = Mathf.Clamp(gridWidth / 2, 0, gridWidth - 1);
         gz = Mathf.Clamp(gridHeight / 2, 0, gridHeight - 1);
         yaw = 0f;
 
         UpdateGhostTransform();
         ValidateGhost();
-
         WireButtons(true);
     }
 
-    // Begin placement for center (N x N)
     void BeginPlacementCenter(int n)
     {
         if (centerPlaced) return;
 
         isPlacing = true;
         currentIsCenter = true;
-
-        footprintW = n;
-        footprintH = n;
+        footprintW = footprintH = n;
 
         currentPrefab = centerPrefab;
         CreateGhost(currentPrefab);
 
-        // Start near middle, clamp so footprint fits
         gx = Mathf.Clamp(gridWidth / 2 - n / 2, 0, Mathf.Max(0, gridWidth - n));
         gz = Mathf.Clamp(gridHeight / 2 - n / 2, 0, Mathf.Max(0, gridHeight - n));
         yaw = 0f;
 
         UpdateGhostTransform();
         ValidateGhost();
-
         WireButtons(true);
     }
 
-    // End placement function
     void EndPlacement()
     {
         isPlacing = false;
         currentPrefab = null;
         currentIndex = -1;
 
-        currentIsCenter = false; // reset center mode
-        footprintW = 1;
-        footprintH = 1;
+        currentIsCenter = false;
+        footprintW = footprintH = 1;
 
         DestroyGhost();
         WireButtons(false);
     }
 
-    // Confirm placement function
+    void CancelPlacement()
+    {
+        centerSizePromptPanel?.SetActive(false);
+        EndPlacement();
+    }
+
+    // Confirm
     void ConfirmPlacement()
     {
         if (!isPlacing || ghostInstance == null) return;
         if (!ValidateGhost()) return;
 
-        // Spawn the real object at the footprint center
         Vector3 spawnPos = FootprintCenterWorld(gx, gz, footprintW, footprintH);
         var real = Instantiate(currentPrefab, spawnPos, Quaternion.Euler(0f, yaw, 0f));
 
-        // Scale the spawned object if it's the center (match ghost logic)
         if (currentIsCenter)
         {
             var s = real.transform.localScale;
@@ -289,7 +266,7 @@ public class PlacementMobileManager : MonoBehaviour
             if (placeCenterButton) placeCenterButton.interactable = false;
         }
 
-        // Mark all covered cells occupied
+        // Mark cells
         for (int x = 0; x < footprintW; x++)
             for (int z = 0; z < footprintH; z++)
                 occupied[gx + x, gz + z] = true;
@@ -297,13 +274,7 @@ public class PlacementMobileManager : MonoBehaviour
         EndPlacement();
     }
 
-    void CancelPlacement()
-    {
-        centerSizePromptPanel?.SetActive(false);
-        EndPlacement();
-    }
-
-    // Create Ghost function
+    // Ghost
     void CreateGhost(GameObject src)
     {
         DestroyGhost();
@@ -312,7 +283,6 @@ public class PlacementMobileManager : MonoBehaviour
         ghostInstance = Instantiate(src);
         ghostInstance.name = "[GHOST] " + src.name;
 
-        // Remember base scale
         ghostBaseScale = ghostInstance.transform.localScale;
 
         // Collect renderers
@@ -323,7 +293,7 @@ public class PlacementMobileManager : MonoBehaviour
         foreach (var col in ghostInstance.GetComponentsInChildren<Collider>(true))
             col.enabled = false;
 
-        // Build per-renderer valid/invalid material arrays (instances so we can tweak alpha safely)
+        // Build per-renderer valid/invalid mats
         ghostValidMats.Clear();
         ghostInvalidMats.Clear();
         foreach (var r in ghostRenderers)
@@ -339,17 +309,14 @@ public class PlacementMobileManager : MonoBehaviour
             }
             ghostValidMats.Add(validArr);
             ghostInvalidMats.Add(invalidArr);
-
             r.materials = validArr;
         }
 
         usingInvalidLook = false;
-        // Set initial alpha to mid of the pulse to avoid popping
         float a0 = (pulseMinAlpha + pulseMaxAlpha) * 0.5f;
         SetGhostAlpha(a0);
     }
 
-    // Destroy ghost function
     void DestroyGhost()
     {
         if (ghostInstance) Destroy(ghostInstance);
@@ -361,27 +328,18 @@ public class PlacementMobileManager : MonoBehaviour
         lastValid = false;
     }
 
-    // Update Ghost
     void UpdateGhostTransform()
     {
         if (!ghostInstance) return;
 
-        // Position at center of footprint
         Vector3 centerPos = FootprintCenterWorld(gx, gz, footprintW, footprintH);
         ghostInstance.transform.position = centerPos;
         ghostInstance.transform.rotation = Quaternion.Euler(0f, yaw, 0f);
 
-        // Scale: for center piece, stretch to N×N cells; for normal, keep base scale
         if (currentIsCenter)
         {
-            // If your prefab is authored to be "1 cell" wide in X/Z already, this simple scale works:
             var s = ghostBaseScale;
             ghostInstance.transform.localScale = new Vector3(s.x * footprintW, s.y, s.z * footprintH);
-
-            // If your authored size isn't "1 cell", you could instead compute world cell size and match exactly:
-            // float cellX = surfaceBounds.size.x / gridWidth;
-            // float cellZ = surfaceBounds.size.z / gridHeight;
-            // ghostInstance.transform.localScale = new Vector3(cellX * footprintW, s.y, cellZ * footprintH);
         }
         else
         {
@@ -389,7 +347,6 @@ public class PlacementMobileManager : MonoBehaviour
         }
     }
 
-    // Rotate Ghost before placement
     void RotateGhost()
     {
         yaw = (yaw + 90f) % 360f;
@@ -397,7 +354,6 @@ public class PlacementMobileManager : MonoBehaviour
         ValidateGhost();
     }
 
-    // Move ghost with button
     void Nudge(int dx, int dz)
     {
         if (!isPlacing) return;
@@ -405,10 +361,8 @@ public class PlacementMobileManager : MonoBehaviour
         int maxX = Mathf.Max(0, gridWidth - footprintW);
         int maxZ = Mathf.Max(0, gridHeight - footprintH);
 
-        int nx = Mathf.Clamp(gx + dx, 0, maxX);
-        int nz = Mathf.Clamp(gz + dz, 0, maxZ);
-
-        gx = nx; gz = nz;
+        gx = Mathf.Clamp(gx + dx, 0, maxX);
+        gz = Mathf.Clamp(gz + dz, 0, maxZ);
 
         UpdateGhostTransform();
         ValidateGhost();
@@ -418,12 +372,10 @@ public class PlacementMobileManager : MonoBehaviour
     {
         bool valid = true;
 
-        // In-bounds for top-left + footprint
         valid &= gx >= 0 && gz >= 0 &&
                  gx + footprintW <= gridWidth &&
                  gz + footprintH <= gridHeight;
 
-        // Ensure every covered cell is free
         if (valid)
         {
             for (int x = 0; x < footprintW && valid; x++)
@@ -431,15 +383,12 @@ public class PlacementMobileManager : MonoBehaviour
                     if (occupied[gx + x, gz + z]) valid = false;
         }
 
-        // Only one center allowed
         if (valid && currentIsCenter && centerPlaced)
             valid = false;
 
-        // Physics overlap (match footprint bounds)
         if (valid)
         {
             Vector3 center = FootprintCenterWorld(gx, gz, footprintW, footprintH);
-
             float halfX = (surfaceBounds.size.x / gridWidth) * footprintW * 0.49f;
             float halfZ = (surfaceBounds.size.z / gridHeight) * footprintH * 0.49f;
 
@@ -451,17 +400,14 @@ public class PlacementMobileManager : MonoBehaviour
             if (hitCount > 0) valid = false;
         }
 
-        // If state changed, swap look
         if (valid != lastValid)
         {
             if (valid) ApplyValidLook();
-            else       ApplyInvalidLook();
+            else ApplyInvalidLook();
             lastValid = valid;
         }
 
-        // Confirm button state
         if (confirmButton) confirmButton.interactable = valid;
-
         return valid;
     }
 
@@ -472,8 +418,6 @@ public class PlacementMobileManager : MonoBehaviour
             ghostRenderers[i].materials = ghostValidMats[i];
 
         usingInvalidLook = false;
-
-        // set to a safe alpha right away; Update() will pulse it
         float a0 = (pulseMinAlpha + pulseMaxAlpha) * 0.5f;
         SetGhostAlpha(a0);
     }
@@ -485,12 +429,11 @@ public class PlacementMobileManager : MonoBehaviour
             ghostRenderers[i].materials = ghostInvalidMats[i];
 
         usingInvalidLook = true;
-        // No pulsing while invalid; leave invalid mats’ color as authored
     }
 
     void SetGhostAlpha(float a)
     {
-        if (!ghostInstance || usingInvalidLook) return; // don't change alpha on the invalid/red look
+        if (!ghostInstance || usingInvalidLook) return;
         foreach (var r in ghostRenderers)
         {
             foreach (var m in r.materials)
@@ -509,21 +452,7 @@ public class PlacementMobileManager : MonoBehaviour
         }
     }
 
-    Vector3 CellCenter(int cx, int cz)
-    {
-        var min = surfaceBounds.min;
-        float sizeX = surfaceBounds.size.x;
-        float sizeZ = surfaceBounds.size.z;
-        float cellX = sizeX / gridWidth;
-        float cellZ = sizeZ / gridHeight;
-
-        return new Vector3(
-            min.x + cx * cellX + cellX * 0.5f,
-            surfaceY,
-            min.z + cz * cellZ + cellZ * 0.5f
-        );
-    }
-
+    // Utility
     Vector3 FootprintCenterWorld(int cx, int cz, int w, int h)
     {
         var min = surfaceBounds.min;
@@ -534,25 +463,19 @@ public class PlacementMobileManager : MonoBehaviour
 
         float worldX = min.x + (cx + w * 0.5f) * cellX;
         float worldZ = min.z + (cz + h * 0.5f) * cellZ;
-        return new Vector3(worldX, surfaceY, worldZ);
-    }
 
-    Vector3 CellHalfExtents()
-    {
-        // ~1 cell footprint, leave a small margin
-        float hx = surfaceBounds.size.x / gridWidth * 0.49f;
-        float hz = surfaceBounds.size.z / gridHeight * 0.49f;
-        return new Vector3(hx, 0.25f, hz);
+        // Apply placement height offset relative to surfaceY
+        return new Vector3(worldX, surfaceY + heightOffset, worldZ);
     }
 
     void SetControlsVisible(bool visible)
     {
-        if (upButton)       upButton.gameObject.SetActive(visible);
-        if (downButton)     downButton.gameObject.SetActive(visible);
-        if (leftButton)     leftButton.gameObject.SetActive(visible);
-        if (rightButton)    rightButton.gameObject.SetActive(visible);
-        if (rotateButton)   rotateButton.gameObject.SetActive(visible);
-        if (confirmButton)  confirmButton.gameObject.SetActive(visible);
-        if (cancelButton)   cancelButton.gameObject.SetActive(visible);
+        if (upButton) upButton.gameObject.SetActive(visible);
+        if (downButton) downButton.gameObject.SetActive(visible);
+        if (leftButton) leftButton.gameObject.SetActive(visible);
+        if (rightButton) rightButton.gameObject.SetActive(visible);
+        if (rotateButton) rotateButton.gameObject.SetActive(visible);
+        if (confirmButton) confirmButton.gameObject.SetActive(visible);
+        if (cancelButton) cancelButton.gameObject.SetActive(visible);
     }
 }
