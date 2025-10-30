@@ -50,7 +50,7 @@ public class MapDataFetcher : MonoBehaviour
         }
         var tex = DownloadHandlerTexture.GetContent(req);
         mapImage.texture = tex;
-        // mapImage.SetNativeSize(); // optional
+        mapImage.SetNativeSize(); // optional
     }
 
     IEnumerator LoadMapToRenderer(double lat, double lon, int mapStyle)
@@ -92,7 +92,7 @@ public class MapDataFetcher : MonoBehaviour
         mat.mainTextureScale = Vector2.one;
         mat.mainTextureOffset = Vector2.zero;
 
-        FitMeshToTextureAspect(tex);
+        // FitMeshToTextureAspect(tex); // This makes the Texture small
     }
 
 
