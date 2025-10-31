@@ -64,6 +64,9 @@ public class PlacementMobileManager : MonoBehaviour
     private bool isPlacing = false;
     private bool[,] occupied; // gridWidth x gridHeight
 
+    // Tracks the connected network grown from the center (intersection)
+    private bool[,] network; // gridWidth x gridHeight
+
     // current ghost state (grid coords + rotation)
     private int gx, gz;        // top-left cell for current footprint
     private float yaw;         // 0/90/180/270
@@ -82,6 +85,9 @@ public class PlacementMobileManager : MonoBehaviour
     // Center piece state
     private bool centerPlaced = false;
     private bool currentIsCenter = false;
+
+    // Connectivity requirement for current prefab (true for roads)
+    private bool currentRequiresConn = false;
 
     private Vector3 ghostBaseScale = Vector3.one;
 
@@ -105,6 +111,7 @@ public class PlacementMobileManager : MonoBehaviour
         surfaceY = surfaceBounds.center.y;
 
         occupied = new bool[gridWidth, gridHeight];
+        network  = new bool[gridWidth, gridHeight];
 
         WireButtons(false);
 
@@ -198,6 +205,9 @@ public class PlacementMobileManager : MonoBehaviour
         currentIsCenter = false;
         footprintW = footprintH = 1;
 
+        // Determine if this prefab requires connection to the network (i.e., is a road)
+        currentRequiresConn = currentPrefab && currentPrefab.GetComponent<RequiresCenterConnection>() != null;
+
         CreateGhost(currentPrefab);
 
         gx = Mathf.Clamp(gridWidth / 2, 0, gridWidth - 1);
@@ -218,6 +228,10 @@ public class PlacementMobileManager : MonoBehaviour
         footprintW = footprintH = n;
 
         currentPrefab = centerPrefab;
+
+        // Center never requires a connection (it is the seed)
+        currentRequiresConn = false;
+
         CreateGhost(currentPrefab);
 
         gx = Mathf.Clamp(gridWidth / 2 - n / 2, 0, Mathf.Max(0, gridWidth - n));
@@ -236,6 +250,7 @@ public class PlacementMobileManager : MonoBehaviour
         currentIndex = -1;
 
         currentIsCenter = false;
+        currentRequiresConn = false;
         footprintW = footprintH = 1;
 
         DestroyGhost();
@@ -270,6 +285,17 @@ public class PlacementMobileManager : MonoBehaviour
         for (int x = 0; x < footprintW; x++)
             for (int z = 0; z < footprintH; z++)
                 occupied[gx + x, gz + z] = true;
+
+        // Grow the connected network:
+        // - Always add the center area
+        // - Add the placed piece if it requires connection (i.e., it is a road)
+        bool addToNetwork = currentIsCenter || currentRequiresConn;
+        if (addToNetwork)
+        {
+            for (int x = 0; x < footprintW; x++)
+                for (int z = 0; z < footprintH; z++)
+                    network[gx + x, gz + z] = true;
+        }
 
         EndPlacement();
     }
@@ -400,6 +426,15 @@ public class PlacementMobileManager : MonoBehaviour
             if (hitCount > 0) valid = false;
         }
 
+        // Roads must connect to the intersection-grown network
+        if (valid && currentRequiresConn)
+        {
+            // Cannot place roads before the center exists
+            if (!centerPlaced) valid = false;
+            // Must be edge-adjacent to any network cell (no diagonals)
+            else if (!IsAdjacentToNetwork(gx, gz, footprintW, footprintH)) valid = false;
+        }
+
         if (valid != lastValid)
         {
             if (valid) ApplyValidLook();
@@ -409,6 +444,26 @@ public class PlacementMobileManager : MonoBehaviour
 
         if (confirmButton) confirmButton.interactable = valid;
         return valid;
+    }
+
+    // 4-neighbour adjacency check (no diagonals) around the footprint
+    bool IsAdjacentToNetwork(int x0, int z0, int w, int h)
+    {
+        for (int x = x0; x < x0 + w; x++)
+        {
+            for (int z = z0; z < z0 + h; z++)
+            {
+                // Up
+                if (z + 1 < gridHeight && network[x, z + 1]) return true;
+                // Down
+                if (z - 1 >= 0 && network[x, z - 1]) return true;
+                // Right
+                if (x + 1 < gridWidth && network[x + 1, z]) return true;
+                // Left
+                if (x - 1 >= 0 && network[x - 1, z]) return true;
+            }
+        }
+        return false;
     }
 
     void ApplyValidLook()
