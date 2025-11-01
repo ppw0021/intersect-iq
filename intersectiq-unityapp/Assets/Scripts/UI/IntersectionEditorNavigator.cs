@@ -15,6 +15,7 @@ public class IntersectionEditorNavigator : MonoBehaviour
     [SerializeField] Button homePanel_rotateTexClockwise;
     [SerializeField] Button homePanel_rotateTexCounterClockwise;
 
+    [SerializeField] Button homePanel_trafficSimButton;
     [SerializeField] PlacementMobileManager placementMobileManager;
 
 
@@ -33,14 +34,8 @@ public class IntersectionEditorNavigator : MonoBehaviour
         homePanel_toggleOverLayButton.onClick.AddListener(homePanel_onOverLayClick);
         homePanel_rotateTexClockwise.onClick.AddListener(homePanel_onRotateClockwiseClick);
         homePanel_rotateTexCounterClockwise.onClick.AddListener(homePanel_onRotateCounterClockwiseClick);
+        homePanel_trafficSimButton.onClick.AddListener(homePanel_onTrafficSimButtonClick);
     }
-
-    // Update is called once per frame
-    void Update()
-    {
-
-    }
-
     void homePanel_onHomeClick()
     {
         SceneParameters.SetSavedJSON(placementMobileManager.SavePlacementsToJson());
@@ -75,5 +70,12 @@ public class IntersectionEditorNavigator : MonoBehaviour
     {
         // Rotate map counter-clockwise by 15 degrees
         mapQuad.transform.Rotate(0f, 0f, -5f, Space.Self);
+    }
+
+    void homePanel_onTrafficSimButtonClick()
+    {
+        SceneParameters.SetSavedJSON(placementMobileManager.SavePlacementsToJson());
+        Debug.Log(SceneParameters.GetSavedJSON());
+        SceneManager.LoadScene("TrafficSim");
     }
 }

@@ -14,6 +14,9 @@ EditorBuildSettings:
   - enabled: 1
     path: Assets/Scenes/IntersectionEditorScene.unity
     guid: 6e499e97cd56ef84fa53f9d8ba6b0492
+  - enabled: 1
+    path: Assets/Scenes/TrafficSim.unity
+    guid: 67eda92a0256b104cb9de86dce0a32fb
   m_configObjects:
     com.unity.adaptiveperformance.simulator.provider_settings: {fileID: 11400000, guid: c4cd05ce3ccfd534691cbdcea8162412, type: 2}
     com.unity.input.settings.actions: {fileID: -944628639613478452, guid: 052faaac586de48259a63d0c4782560b, type: 3}
