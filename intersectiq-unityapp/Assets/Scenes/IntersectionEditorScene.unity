@@ -5008,6 +5008,7 @@ MonoBehaviour:
   mapQuad: {fileID: 1092626430}
   homePanel_rotateTexClockwise: {fileID: 142668118}
   homePanel_rotateTexCounterClockwise: {fileID: 1387992694}
+  placementMobileManager: {fileID: 2109674190}
 --- !u!114 &1906326386
 MonoBehaviour:
   m_ObjectHideFlags: 0

@@ -1,14 +1,18 @@
+using System;
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 // Checks for legacy input system
-#if ENABLE_INPUT_SYSTEM && !ENABLE_LEGACY_INPUT_MANAGER
-using UnityEngine.InputSystem;
-#endif
+// #if ENABLE_INPUT_SYSTEM && !ENABLE_LEGACY_INPUT_MANAGER
+// using UnityEngine.InputSystem;
+// #endif
+
 public class PlacementMobileManager : MonoBehaviour
 {
     [Header("Surface")]
     public Transform gridSurface;
+
     [Header("Placement Height")]
     [SerializeField] private float heightOffset = 0f;
 
@@ -91,6 +95,36 @@ public class PlacementMobileManager : MonoBehaviour
 
     private Vector3 ghostBaseScale = Vector3.one;
 
+    // ================================
+    // == Placement Recording (NEW) ==
+    // ================================
+    [Serializable]
+    public class PlacedItem
+    {
+        public string prefabName;
+        public bool isCenter;
+        public int x, z;         // top-left grid cell
+        public int w = 1, h = 1; // footprint in cells
+        public float yaw;        // rotation around Y (0/90/180/270)
+        [NonSerialized] public GameObject instance; // runtime only
+    }
+
+    // Save file root
+    [Serializable]
+    public class PlacementSave
+    {
+        public int gridWidth;
+        public int gridHeight;
+        public float heightOffset;
+        public List<PlacedItem> items = new List<PlacedItem>();
+    }
+
+    // Stored placements (in order of placement)
+    private readonly List<PlacedItem> placedItems = new List<PlacedItem>();
+
+    // Fast lookup of which item occupies a cell (null if none)
+    private PlacedItem[,] cellOwner;
+
     void Awake()
     {
         cam = Camera.main;
@@ -112,6 +146,7 @@ public class PlacementMobileManager : MonoBehaviour
 
         occupied = new bool[gridWidth, gridHeight];
         network  = new bool[gridWidth, gridHeight];
+        cellOwner = new PlacedItem[gridWidth, gridHeight];
 
         WireButtons(false);
 
@@ -124,6 +159,9 @@ public class PlacementMobileManager : MonoBehaviour
         });
         if (centerSizePromptPanel) centerSizePromptPanel.SetActive(false);
         if (placeCenterButton) placeCenterButton.interactable = !centerPlaced;
+
+        // Load from static class
+        LoadPlacementsFromJson(SceneParameters.GetSavedJSON());
     }
 
     void Update()
@@ -198,7 +236,7 @@ public class PlacementMobileManager : MonoBehaviour
         BeginPlacementCenter(n);
     }
 
-    // Begin end cancel
+    // Begin / end / cancel
     void BeginPlacement()
     {
         isPlacing = true;
@@ -269,10 +307,13 @@ public class PlacementMobileManager : MonoBehaviour
         if (!isPlacing || ghostInstance == null) return;
         if (!ValidateGhost()) return;
 
+        // Spawn
         Vector3 spawnPos = FootprintCenterWorld(gx, gz, footprintW, footprintH);
         var real = Instantiate(currentPrefab, spawnPos, Quaternion.Euler(0f, yaw, 0f));
 
-        if (currentIsCenter)
+        // Scale center footprint
+        bool isCenter = currentIsCenter;
+        if (isCenter)
         {
             var s = real.transform.localScale;
             real.transform.localScale = new Vector3(s.x * footprintW, s.y, s.z * footprintH);
@@ -281,21 +322,34 @@ public class PlacementMobileManager : MonoBehaviour
             if (placeCenterButton) placeCenterButton.interactable = false;
         }
 
-        // Mark cells
+        // Mark cells occupied
         for (int x = 0; x < footprintW; x++)
             for (int z = 0; z < footprintH; z++)
                 occupied[gx + x, gz + z] = true;
 
-        // Grow the connected network:
-        // - Always add the center area
-        // - Add the placed piece if it requires connection (i.e., it is a road)
-        bool addToNetwork = currentIsCenter || currentRequiresConn;
+        // Grow the connected network
+        bool addToNetwork = isCenter || currentRequiresConn;
         if (addToNetwork)
         {
             for (int x = 0; x < footprintW; x++)
                 for (int z = 0; z < footprintH; z++)
                     network[gx + x, gz + z] = true;
         }
+
+        // Record placement (NEW)
+        var rec = new PlacedItem
+        {
+            prefabName = currentPrefab ? currentPrefab.name : "Unknown",
+            isCenter = isCenter,
+            x = gx, z = gz,
+            w = footprintW, h = footprintH,
+            yaw = yaw,
+            instance = real
+        };
+        placedItems.Add(rec);
+        for (int x = 0; x < footprintW; x++)
+            for (int z = 0; z < footprintH; z++)
+                cellOwner[gx + x, gz + z] = rec;
 
         EndPlacement();
     }
@@ -398,10 +452,12 @@ public class PlacementMobileManager : MonoBehaviour
     {
         bool valid = true;
 
+        // Bounds
         valid &= gx >= 0 && gz >= 0 &&
                  gx + footprintW <= gridWidth &&
                  gz + footprintH <= gridHeight;
 
+        // Not overlapping occupied
         if (valid)
         {
             for (int x = 0; x < footprintW && valid; x++)
@@ -409,9 +465,11 @@ public class PlacementMobileManager : MonoBehaviour
                     if (occupied[gx + x, gz + z]) valid = false;
         }
 
+        // Only one center placement
         if (valid && currentIsCenter && centerPlaced)
             valid = false;
 
+        // Physics overlap (already placed objects using layer)
         if (valid)
         {
             Vector3 center = FootprintCenterWorld(gx, gz, footprintW, footprintH);
@@ -532,5 +590,187 @@ public class PlacementMobileManager : MonoBehaviour
         if (rotateButton) rotateButton.gameObject.SetActive(visible);
         if (confirmButton) confirmButton.gameObject.SetActive(visible);
         if (cancelButton) cancelButton.gameObject.SetActive(visible);
+    }
+
+    // JSON Save / Load – API
+    /// Saves current placements to a pretty-printed JSON string.
+    /// Includes grid size and heightOffset for reference
+    public string SavePlacementsToJson()
+    {
+        var save = new PlacementSave
+        {
+            gridWidth = this.gridWidth,
+            gridHeight = this.gridHeight,
+            heightOffset = this.heightOffset,
+            items = new List<PlacedItem>(placedItems.Count)
+        };
+
+        // copy items without runtime-only references
+        foreach (var it in placedItems)
+        {
+            save.items.Add(new PlacedItem
+            {
+                prefabName = it.prefabName,
+                isCenter = it.isCenter,
+                x = it.x, z = it.z,
+                w = it.w, h = it.h,
+                yaw = it.yaw
+            });
+        }
+
+        return JsonUtility.ToJson(save, /*prettyPrint=*/true);
+    }
+
+    /// Destroys current placed instances and rebuilds from the given JSON.
+    /// JSON must be created by SavePlacementsToJson().
+    public void LoadPlacementsFromJson(string json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            Debug.LogWarning("LoadPlacementsFromJson: empty JSON. Loading empty");
+            return;
+        }
+
+        PlacementSave loaded;
+        try
+        {
+            loaded = JsonUtility.FromJson<PlacementSave>(json);
+        }
+        catch (Exception e)
+        {
+            Debug.LogError("LoadPlacementsFromJson: parse failed: " + e.Message);
+            return;
+        }
+
+        if (loaded == null || loaded.items == null)
+        {
+            Debug.LogWarning("LoadPlacementsFromJson: no items.");
+            return;
+        }
+
+        // log warning if grid settings differ
+        if (loaded.gridWidth != gridWidth || loaded.gridHeight != gridHeight)
+        {
+            Debug.LogWarning($"Loaded grid size {loaded.gridWidth}x{loaded.gridHeight} does not match current {gridWidth}x{gridHeight}. Items will be placed using current grid.");
+        }
+
+        // Rebuild
+        ClearAllPlacements();
+
+        // Apply placements without validation (assume the save is authoritative)
+        foreach (var data in loaded.items)
+        {
+            TryPlaceFromData(data);
+        }
+
+        // Post: update centerPlaced & UI
+        centerPlaced = HasAnyCenter();
+        if (placeCenterButton) placeCenterButton.interactable = !centerPlaced;
+    }
+
+    // Save Load Functionality
+
+    // Destroys all instantiated items and resets grids/network.
+    void ClearAllPlacements()
+    {
+        // Destroy existing instances
+        foreach (var it in placedItems)
+        {
+            if (it.instance) Destroy(it.instance);
+        }
+        placedItems.Clear();
+
+        // Reset occupancy/network/owners
+        occupied = new bool[gridWidth, gridHeight];
+        network  = new bool[gridWidth, gridHeight];
+        cellOwner = new PlacedItem[gridWidth, gridHeight];
+
+        // Reset center state
+        centerPlaced = false;
+    }
+
+    // Place a single item from save data (no validation UI).
+    void TryPlaceFromData(PlacedItem data)
+    {
+        var prefab = ResolvePrefab(data);
+        if (!prefab)
+        {
+            Debug.LogWarning($"Load: Prefab '{data.prefabName}' not found. Skipping.");
+            return;
+        }
+
+        int w = Mathf.Max(1, data.w);
+        int h = Mathf.Max(1, data.h);
+        int x0 = Mathf.Clamp(data.x, 0, Mathf.Max(0, gridWidth - w));
+        int z0 = Mathf.Clamp(data.z, 0, Mathf.Max(0, gridHeight - h));
+
+        // Compute world position and spawn
+        var pos = FootprintCenterWorld(x0, z0, w, h);
+        var rot = Quaternion.Euler(0f, data.yaw, 0f);
+        var real = Instantiate(prefab, pos, rot);
+
+        // Scale center piece across its footprint
+        if (data.isCenter)
+        {
+            var s = real.transform.localScale;
+            real.transform.localScale = new Vector3(s.x * w, s.y, s.z * h);
+        }
+
+        // Occupancy
+        for (int dx = 0; dx < w; dx++)
+            for (int dz = 0; dz < h; dz++)
+                occupied[x0 + dx, z0 + dz] = true;
+
+        // Network growth: center OR roads (RequireCenterConnection marker)
+        bool requiresConn = (!data.isCenter) && prefab.GetComponent<RequiresCenterConnection>() != null;
+        if (data.isCenter || requiresConn)
+        {
+            for (int dx = 0; dx < w; dx++)
+                for (int dz = 0; dz < h; dz++)
+                    network[x0 + dx, z0 + dz] = true;
+        }
+
+        // Record + ownership grid
+        var rec = new PlacedItem
+        {
+            prefabName = data.prefabName,
+            isCenter = data.isCenter,
+            x = x0, z = z0,
+            w = w, h = h,
+            yaw = data.yaw,
+            instance = real
+        };
+        placedItems.Add(rec);
+
+        for (int dx = 0; dx < w; dx++)
+            for (int dz = 0; dz < h; dz++)
+                cellOwner[x0 + dx, z0 + dz] = rec;
+    }
+
+    // Resolve prefab by saved name (checks center first, then list)
+    GameObject ResolvePrefab(PlacedItem data)
+    {
+        if (data.isCenter)
+        {
+            if (centerPrefab) return centerPrefab;
+            return null;
+        }
+
+        // Match by name in placeablePrefabs list
+        if (placeablePrefabs != null)
+        {
+            foreach (var p in placeablePrefabs)
+            {
+                if (p && string.Equals(p.name, data.prefabName, StringComparison.Ordinal))
+                    return p;
+            }
+        }
+        return null;
+    }
+
+    bool HasAnyCenter()
+    {
+        foreach (var it in placedItems) if (it.isCenter) return true;
+        return false;
     }
 }

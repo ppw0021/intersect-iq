@@ -4,11 +4,23 @@ using UnityEngine.UI;
 public static class SceneParameters
 {
     // Default params
+    private static string savedJson = "";
     private static double currentLat = -36.918296;
     private static double currentLong = 174.935087;
     private static Renderer currentMapRenderer;
     private static RawImage currentMapImage;
 
+    // --- JSON ---
+    public static string GetSavedJSON()
+    {
+        return savedJson;
+    }
+
+    public static void SetSavedJSON(string jsonIN)
+    {
+        savedJson = jsonIN;
+    }
+    
     // --- Latitude ---
     public static double GetCurrentLat()
     {

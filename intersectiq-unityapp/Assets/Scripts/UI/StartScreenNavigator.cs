@@ -85,6 +85,8 @@ public class StartScreenNavigator : MonoBehaviour
     void selectSaveMenu_ContinueButtonClicked()
     {
         // Load next scene
+        Debug.Log(SceneParameters.GetSavedJSON());
+        SceneManager.LoadScene("IntersectionEditorScene");
     }
 
     // New Save Menu Buttons

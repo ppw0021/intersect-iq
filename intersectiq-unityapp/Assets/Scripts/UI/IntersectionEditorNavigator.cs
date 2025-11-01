@@ -15,6 +15,8 @@ public class IntersectionEditorNavigator : MonoBehaviour
     [SerializeField] Button homePanel_rotateTexClockwise;
     [SerializeField] Button homePanel_rotateTexCounterClockwise;
 
+    [SerializeField] PlacementMobileManager placementMobileManager;
+
 
     // Start is called once before the first execution of Update after the MonoBehaviour is created
     void Start()
@@ -41,8 +43,9 @@ public class IntersectionEditorNavigator : MonoBehaviour
 
     void homePanel_onHomeClick()
     {
+        SceneParameters.SetSavedJSON(placementMobileManager.SavePlacementsToJson());
+        Debug.Log(SceneParameters.GetSavedJSON());
         SceneManager.LoadScene("StartScreen");
-
     }
 
     void homePanel_onOverLayClick()
