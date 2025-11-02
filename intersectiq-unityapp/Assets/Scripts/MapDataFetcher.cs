@@ -134,10 +134,8 @@ public class MapDataFetcher : MonoBehaviour
             // transparent and white
             style =
             "&style=feature:all|element:labels|visibility:off" +
-            // "&style=feature:administrative|visibility:off" +
             "&style=feature:poi|visibility:off" +
             "&style=feature:landscape|visibility:off" +
-            // "&style=feature:transit|visibility:off" +
             "&style=feature:water|visibility:off" +
             "&style=feature:road|visibility:on|color:0xffffff";
         }
