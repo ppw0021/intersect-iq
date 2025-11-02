@@ -1035,11 +1035,12 @@ MonoBehaviour:
   laneWidth: 0.2
   stopDistance: 0.5
   detectionInterval: 0.1
-  groundMask:
+  centerLayerMask:
     serializedVersion: 2
-    m_Bits: 64
-  groundRayDistance: 3
-  groundOffset: 0.02
+    m_Bits: 256
+  centerCheckRayLength: 5
+  trafficSimulator: {fileID: 0}
+  exitArrivalDistance: 0.75
 --- !u!64 &-1401096453403507519
 MeshCollider:
   m_ObjectHideFlags: 0

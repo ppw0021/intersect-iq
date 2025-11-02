@@ -51,6 +51,9 @@ public class TrafficSimulator : MonoBehaviour
     private Vector2 intersectionCenterGrid;
     private Vector3 intersectionCenterWorld;
 
+    // Center rectangle (grid coords) for adjacency checks
+    private int centerX0, centerZ0, centerW = 1, centerH = 1;
+
     [Serializable]
     public class PlacedItem
     {
@@ -69,6 +72,19 @@ public class TrafficSimulator : MonoBehaviour
         public float heightOffset;
         public List<PlacedItem> items = new List<PlacedItem>();
     }
+
+    // Exit nodes you can path to after entering the intersection
+    [Serializable]
+    public struct ExitNode
+    {
+        public int x, z;              // grid cell
+        public Vector3 world;         // world-space waypoint (center of cell, slightly nudged outward)
+        public Vector3 forward;       // outward lane forward
+        public string side;           // "North"/"South"/"East"/"West"
+    }
+
+    private readonly List<ExitNode> exits = new List<ExitNode>();
+    public IReadOnlyList<ExitNode> IntersectionExits => exits;
 
     void Awake()
     {
@@ -107,6 +123,7 @@ public class TrafficSimulator : MonoBehaviour
         spawnerCells = new bool[gridWidth, gridHeight];
         roadYawDeg = new float[gridWidth, gridHeight];
         intersectionFound = false;
+        exits.Clear();
     }
 
     public void LoadFromJson(string json)
@@ -142,7 +159,12 @@ public class TrafficSimulator : MonoBehaviour
             if (item.isCenter)
             {
                 intersectionFound = true;
-                intersectionCenterGrid = new Vector2(item.x + item.w * 0.5f, item.z + item.h * 0.5f);
+                centerX0 = item.x;
+                centerZ0 = item.z;
+                centerW  = Mathf.Max(1, item.w);
+                centerH  = Mathf.Max(1, item.h);
+
+                intersectionCenterGrid  = new Vector2(item.x + item.w * 0.5f, item.z + item.h * 0.5f);
                 intersectionCenterWorld = FootprintCenterWorld(item.x, item.z, item.w, item.h);
             }
         }
@@ -150,9 +172,17 @@ public class TrafficSimulator : MonoBehaviour
         if (!intersectionFound)
         {
             Debug.LogWarning("[TrafficSimulator] No intersection found. Using grid midpoint as fallback.");
-            intersectionCenterGrid = new Vector2(gridWidth * 0.5f, gridHeight * 0.5f);
+            centerX0 = Mathf.Max(0, gridWidth  / 2 - 0);
+            centerZ0 = Mathf.Max(0, gridHeight / 2 - 0);
+            centerW  = 1;
+            centerH  = 1;
+
+            intersectionCenterGrid  = new Vector2(gridWidth * 0.5f, gridHeight * 0.5f);
             intersectionCenterWorld = FootprintCenterWorld((int)intersectionCenterGrid.x, (int)intersectionCenterGrid.y, 1, 1);
         }
+
+        // build outward exit targets right after placing
+        BuildIntersectionExits();
 
         AutoPlaceSpawnersOnEdges();
     }
@@ -269,6 +299,88 @@ public class TrafficSimulator : MonoBehaviour
         return true;
     }
 
+    // Exit discovery
+
+    private void BuildIntersectionExits()
+    {
+        exits.Clear();
+
+        // Cell sizes (for nudging the waypoint outward a bit)
+        float cellX = surfaceBounds.size.x / gridWidth;
+        float cellZ = surfaceBounds.size.z / gridHeight;
+
+        // Helper to register an exit if the cell is a road and points outward
+        void TryAddExit(int gx, int gz, Vector3 outward, string sideTag)
+        {
+            if (gx < 0 || gz < 0 || gx >= gridWidth || gz >= gridHeight) return;
+            if (!roadCells[gx, gz]) return;
+
+            float yawDeg = roadYawDeg[gx, gz];
+            if (snapRoadYawToCardinals) yawDeg = SnapYawToCardinal(yawDeg);
+            Vector3 fwd = YawToForward(yawDeg);
+
+            // Must be pointing (roughly) outward
+            if (Vector3.Dot(fwd, outward) < 0.6f) return;
+
+            Vector3 world = FootprintCenterWorld(gx, gz, 1, 1);
+            // Nudge the waypoint outward half a cell so cars don't sit on the center seam
+            Vector3 nudge = new Vector3(outward.x * (cellX * 0.5f), 0f, outward.z * (cellZ * 0.5f));
+            world += nudge;
+
+            exits.Add(new ExitNode
+            {
+                x = gx, z = gz,
+                world = world,
+                forward = fwd,
+                side = sideTag
+            });
+        }
+
+        // For each side, look at the ring of cells directly adjacent to the center footprint
+        // Left (West): cells at x = centerX0 - 1, z in [centerZ0 .. centerZ0+centerH-1]
+        for (int z = centerZ0; z < centerZ0 + centerH; z++)
+            TryAddExit(centerX0 - 1, z, new Vector3(-1, 0, 0), "West");
+
+        // Right (East): cells at x = centerX0 + centerW
+        for (int z = centerZ0; z < centerZ0 + centerH; z++)
+            TryAddExit(centerX0 + centerW, z, new Vector3(1, 0, 0), "East");
+
+        // Bottom (South): cells at z = centerZ0 - 1, x in [centerX0 .. centerX0+centerW-1]
+        for (int x = centerX0; x < centerX0 + centerW; x++)
+            TryAddExit(x, centerZ0 - 1, new Vector3(0, 0, -1), "South");
+
+        // Top (North): cells at z = centerZ0 + centerH
+        for (int x = centerX0; x < centerX0 + centerW; x++)
+            TryAddExit(x, centerZ0 + centerH, new Vector3(0, 0, 1), "North");
+
+        Debug.Log($"[TrafficSimulator] Found {exits.Count} intersection exits.");
+    }
+
+    /// Pick any exit
+    public bool TryGetRandomExit(out ExitNode exit)
+    {
+        if (exits.Count == 0) { exit = default; return false; }
+        int i = UnityEngine.Random.Range(0, exits.Count);
+        exit = exits[i];
+        return true;
+    }
+
+    /// Get nearest exit to a world position
+    public ExitNode GetNearestExit(Vector3 fromWorld)
+    {
+        if (exits.Count == 0) return default;
+
+        float best = float.MaxValue;
+        int bestIdx = 0;
+        for (int i = 0; i < exits.Count; i++)
+        {
+            float d = (exits[i].world - fromWorld).sqrMagnitude;
+            if (d < best) { best = d; bestIdx = i; }
+        }
+        return exits[bestIdx];
+    }
+
+
     static Vector3 YawToForward(float yawDeg)
     {
         float rad = yawDeg * Mathf.Deg2Rad;
@@ -287,4 +399,26 @@ public class TrafficSimulator : MonoBehaviour
         }
         return best;
     }
+
+#if UNITY_EDITOR
+    void OnDrawGizmosSelected()
+    {
+        // Visualize exits
+        if (exits != null)
+        {
+            foreach (var ex in exits)
+            {
+                Gizmos.color = Color.magenta;
+                Gizmos.DrawSphere(ex.world, 0.15f);
+                Gizmos.color = Color.white;
+                Gizmos.DrawLine(ex.world, ex.world + ex.forward * 0.8f);
+            }
+        }
+
+        // Existing gizmos for spawner detection
+        Gizmos.color = Color.cyan;
+        Vector3 center = intersectionCenterWorld;
+        Gizmos.DrawWireSphere(center, 0.2f);
+    }
+#endif
 }
