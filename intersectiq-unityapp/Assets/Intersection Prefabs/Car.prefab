@@ -982,7 +982,8 @@ GameObject:
   m_Component:
   - component: {fileID: 5396527943567229577}
   - component: {fileID: 1365480747474507342}
-  m_Layer: 0
+  - component: {fileID: -1401096453403507519}
+  m_Layer: 7
   m_Name: Car
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -1026,12 +1027,41 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 52d16ac3293281c41836a57e4ddfdd7c, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  speed: 3
-  moveSmoothTime: 0.08
-  groundRayDistance: 3
+  cruiseSpeed: 2
+  acceleration: 1
+  braking: 100
+  turnRate: 360
+  detectionRange: 0.71
+  laneWidth: 0.2
+  stopDistance: 0.5
+  detectionInterval: 0.1
   groundMask:
     serializedVersion: 2
+    m_Bits: 64
+  groundRayDistance: 3
+  groundOffset: 0.02
+--- !u!64 &-1401096453403507519
+MeshCollider:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7092050767786334501}
+  m_Material: {fileID: 0}
+  m_IncludeLayers:
+    serializedVersion: 2
     m_Bits: 0
+  m_ExcludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_LayerOverridePriority: 0
+  m_IsTrigger: 0
+  m_ProvidesContacts: 0
+  m_Enabled: 1
+  serializedVersion: 5
+  m_Convex: 0
+  m_CookingOptions: 30
+  m_Mesh: {fileID: 0}
 --- !u!1 &8271613443595971443
 GameObject:
   m_ObjectHideFlags: 0
