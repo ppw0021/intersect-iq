@@ -202,6 +202,16 @@ public class PlacementMobileManager : MonoBehaviour
     // Placements
     public void SelectPrefabByIndex(int index)
     {
+        // Center first
+        if (!centerPlaced)
+        {
+            Debug.LogWarning("Place the Center first before adding other items.");
+            // Nudge user into the center flow by opening the size prompt.
+            if (centerSizePromptPanel) centerSizePromptPanel.SetActive(true);
+            if (centerSizeInput) centerSizeInput.text = "2";
+            return;
+        }
+
         if (index < 0 || index >= placeablePrefabs.Count)
         {
             CancelPlacement();
@@ -239,6 +249,14 @@ public class PlacementMobileManager : MonoBehaviour
     // Begin / end / cancel
     void BeginPlacement()
     {
+        // Center first
+        if (!centerPlaced && !currentIsCenter)
+        {
+            Debug.LogWarning("Cannot place non-center items until the Center is placed.");
+            CancelPlacement();
+            return;
+        }
+
         isPlacing = true;
         currentIsCenter = false;
         footprintW = footprintH = 1;
