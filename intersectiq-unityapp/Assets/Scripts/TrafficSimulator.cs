@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using UnityEngine;
-using UnityEngine.UI;
 
 public class TrafficSimulator : MonoBehaviour
 {
@@ -27,41 +26,30 @@ public class TrafficSimulator : MonoBehaviour
     [Tooltip("All placeable prefabs (must match names saved in JSON).")]
     public List<GameObject> placeablePrefabs = new List<GameObject>();
 
-    // CAR SPAWNER PLACEMENT
-    [Header("Car Spawner (Placement)")]
-    [Tooltip("Prefab that will be placed on top of a single road cell.")]
+    [Header("Car Spawner (Auto-Fill)")]
+    [Tooltip("Prefab to spawn on edge road cells that face the intersection.")]
     [SerializeField] private GameObject carSpawnerPrefab;
 
-    [Tooltip("Material used for the valid ghost look.")]
-    [SerializeField] private Material ghostMaterial;
+    [Tooltip("If true, treat road yaw as cardinal-only when deciding if it faces the intersection.")]
+    [SerializeField] private bool snapRoadYawToCardinals = true;
 
-    [Tooltip("Material used for invalid ghost look.")]
-    [SerializeField] private Material invalidMaterial;
-
-    [Header("Ghost Pulse")]
-    [Range(0f, 1f)] public float pulseMinAlpha = 0.20f;
-    [Range(0f, 1f)] public float pulseMaxAlpha = 0.75f;
-    public float pulseSpeed = 2.0f;
-
-    [Header("UI - Control Buttons (Optional)")]
-    [SerializeField] private Button upButton;
-    [SerializeField] private Button downButton;
-    [SerializeField] private Button leftButton;
-    [SerializeField] private Button rightButton;
-    // [SerializeField] private Button rotateButton;
-    [SerializeField] private Button confirmButton;
-    [SerializeField] private Button cancelButton;
+    [Tooltip("Minimum dot(forward, dirToIntersection) needed to count as 'facing towards'. 0 = any inward-ish, 0.5 ≈ within 60°, 0.707 ≈ within 45°.")]
+    [Range(-1f, 1f)]
+    [SerializeField] private float facingDotThreshold = 0.5f;
 
     // Internals
     private Renderer surfaceRenderer;
     private Bounds surfaceBounds;
     private float surfaceY;
-
     private readonly List<GameObject> spawned = new List<GameObject>();
 
-    // Grid flags detected from loaded map
     private bool[,] roadCells;
     private bool[,] spawnerCells;
+    private float[,] roadYawDeg;
+
+    private bool intersectionFound = false;
+    private Vector2 intersectionCenterGrid;
+    private Vector3 intersectionCenterWorld;
 
     [Serializable]
     public class PlacedItem
@@ -82,31 +70,21 @@ public class TrafficSimulator : MonoBehaviour
         public List<PlacedItem> items = new List<PlacedItem>();
     }
 
-    // CAR SPAWNER PLACEMENT: runtime state
-    private bool placingSpawner = false;
-    private GameObject spawnerGhost;
-    private List<Renderer> ghostRs = new List<Renderer>();
-    private List<Material[]> ghostValidMats = new List<Material[]>();
-    private List<Material[]> ghostInvalidMats = new List<Material[]>();
-    private bool usingInvalidLook = false;
-    private bool lastValid = false;
-
-    private int gx, gz;
-    private float yaw;
-
     void Awake()
     {
         if (!gridSurface)
         {
             Debug.LogError("[TrafficSimulator] Assign gridSurface.");
-            enabled = false; return;
+            enabled = false;
+            return;
         }
 
         surfaceRenderer = gridSurface.GetComponentInChildren<Renderer>();
         if (!surfaceRenderer)
         {
             Debug.LogError("[TrafficSimulator] gridSurface must have a Renderer in its hierarchy.");
-            enabled = false; return;
+            enabled = false;
+            return;
         }
 
         surfaceBounds = surfaceRenderer.bounds;
@@ -114,39 +92,25 @@ public class TrafficSimulator : MonoBehaviour
 
         roadCells = new bool[gridWidth, gridHeight];
         spawnerCells = new bool[gridWidth, gridHeight];
+        roadYawDeg = new float[gridWidth, gridHeight];
 
         LoadFromJson(SceneParameters.GetSavedJSON());
-        WireButtons(false);
-
-        // --- UI VISIBILITY CONTROL ---
-        SetControlButtonsVisible(false); // Hide controls by default
-    }
-
-    void Update()
-    {
-        if (placingSpawner && spawnerGhost && lastValid && !usingInvalidLook)
-        {
-            float t = (Mathf.Sin(Time.time * pulseSpeed) + 1f) * 0.5f;
-            float a = Mathf.Lerp(pulseMinAlpha, pulseMaxAlpha, t);
-            SetGhostAlpha(a);
-        }
     }
 
     public void ClearAll()
     {
         foreach (var go in spawned)
-        {
             if (go) Destroy(go);
-        }
-        spawned.Clear();
 
+        spawned.Clear();
         roadCells = new bool[gridWidth, gridHeight];
         spawnerCells = new bool[gridWidth, gridHeight];
+        roadYawDeg = new float[gridWidth, gridHeight];
+        intersectionFound = false;
     }
 
     public void LoadFromJson(string json)
     {
-        Debug.Log($"Placing JSON{json}");
         if (string.IsNullOrWhiteSpace(json))
         {
             Debug.LogWarning("[TrafficSimulator] LoadFromJson: empty JSON.");
@@ -170,17 +134,27 @@ public class TrafficSimulator : MonoBehaviour
             return;
         }
 
-        if (loaded.gridWidth != gridWidth || loaded.gridHeight != gridHeight)
-        {
-            Debug.LogWarning($"[TrafficSimulator] Save grid {loaded.gridWidth}x{loaded.gridHeight} != current {gridWidth}x{gridHeight}. Using current grid for placement.");
-        }
-
         ClearAll();
 
         foreach (var item in loaded.items)
         {
             SpawnItem(item);
+            if (item.isCenter)
+            {
+                intersectionFound = true;
+                intersectionCenterGrid = new Vector2(item.x + item.w * 0.5f, item.z + item.h * 0.5f);
+                intersectionCenterWorld = FootprintCenterWorld(item.x, item.z, item.w, item.h);
+            }
         }
+
+        if (!intersectionFound)
+        {
+            Debug.LogWarning("[TrafficSimulator] No intersection found. Using grid midpoint as fallback.");
+            intersectionCenterGrid = new Vector2(gridWidth * 0.5f, gridHeight * 0.5f);
+            intersectionCenterWorld = FootprintCenterWorld((int)intersectionCenterGrid.x, (int)intersectionCenterGrid.y, 1, 1);
+        }
+
+        AutoPlaceSpawnersOnEdges();
     }
 
     void SpawnItem(PlacedItem data)
@@ -194,12 +168,11 @@ public class TrafficSimulator : MonoBehaviour
 
         int w = Mathf.Max(1, data.w);
         int h = Mathf.Max(1, data.h);
-        int x0 = Mathf.Clamp(data.x, 0, Mathf.Max(0, gridWidth - w));
-        int z0 = Mathf.Clamp(data.z, 0, Mathf.Max(0, gridHeight - h));
+        int x0 = Mathf.Clamp(data.x, 0, gridWidth - w);
+        int z0 = Mathf.Clamp(data.z, 0, gridHeight - h);
 
         Vector3 pos = FootprintCenterWorld(x0, z0, w, h);
         Quaternion rot = Quaternion.Euler(0f, data.yaw, 0f);
-
         var go = Instantiate(prefab, pos, rot);
 
         if (data.isCenter)
@@ -212,8 +185,12 @@ public class TrafficSimulator : MonoBehaviour
         {
             for (int dx = 0; dx < w; dx++)
                 for (int dz = 0; dz < h; dz++)
-                    roadCells[Mathf.Clamp(x0 + dx, 0, gridWidth - 1),
-                              Mathf.Clamp(z0 + dz, 0, gridHeight - 1)] = true;
+                {
+                    int gx = Mathf.Clamp(x0 + dx, 0, gridWidth - 1);
+                    int gz = Mathf.Clamp(z0 + dz, 0, gridHeight - 1);
+                    roadCells[gx, gz] = true;
+                    roadYawDeg[gx, gz] = data.yaw;
+                }
         }
 
         spawned.Add(go);
@@ -222,38 +199,22 @@ public class TrafficSimulator : MonoBehaviour
     GameObject ResolvePrefab(PlacedItem data)
     {
         if (data.isCenter)
-        {
-            if (!centerPrefab)
-            {
-                Debug.LogWarning("[TrafficSimulator] Center prefab not assigned.");
-                return null;
-            }
             return centerPrefab;
-        }
 
-        if (placeablePrefabs != null)
-        {
-            foreach (var p in placeablePrefabs)
-            {
-                if (p && string.Equals(p.name, data.prefabName, StringComparison.Ordinal))
-                    return p;
-            }
-        }
+        foreach (var p in placeablePrefabs)
+            if (p && string.Equals(p.name, data.prefabName, StringComparison.Ordinal))
+                return p;
+
         return null;
     }
 
     Vector3 FootprintCenterWorld(int cx, int cz, int w, int h)
     {
         var min = surfaceBounds.min;
-        float sizeX = surfaceBounds.size.x;
-        float sizeZ = surfaceBounds.size.z;
-
-        float cellX = sizeX / gridWidth;
-        float cellZ = sizeZ / gridHeight;
-
+        float cellX = surfaceBounds.size.x / gridWidth;
+        float cellZ = surfaceBounds.size.z / gridHeight;
         float worldX = min.x + (cx + w * 0.5f) * cellX;
         float worldZ = min.z + (cz + h * 0.5f) * cellZ;
-
         return new Vector3(worldX, surfaceY + heightOffset, worldZ);
     }
 
@@ -262,216 +223,68 @@ public class TrafficSimulator : MonoBehaviour
         return prefab && prefab.GetComponent<RequiresCenterConnection>() != null;
     }
 
-    // CAR SPAWNER PLACEMENT UI
-
-    public void StartCarSpawnerPlacement()
+    void AutoPlaceSpawnersOnEdges()
     {
-        if (carSpawnerPrefab == null)
+        if (!carSpawnerPrefab)
         {
-            Debug.LogError("[TrafficSimulator] CarSpawner prefab not assigned.");
+            Debug.LogWarning("[TrafficSimulator] Auto-place skipped: carSpawnerPrefab not assigned.");
             return;
         }
 
-        placingSpawner = true;
-        gx = Mathf.Clamp(gridWidth / 2, 0, gridWidth - 1);
-        gz = Mathf.Clamp(gridHeight / 2, 0, gridHeight - 1);
-        yaw = 0f;
-
-        CreateGhost(carSpawnerPrefab);
-        UpdateGhostTransform();
-        ValidateGhost();
-        WireButtons(true);
-
-        // --- Show UI controls when placement starts ---
-        SetControlButtonsVisible(true);
-    }
-
-    void CancelCarSpawnerPlacement()
-    {
-        WireButtons(false);
-        DestroyGhost();
-        placingSpawner = false;
-
-        // --- Hide UI controls when done ---
-        SetControlButtonsVisible(false);
-    }
-
-    void ConfirmCarSpawnerPlacement()
-    {
-        if (!placingSpawner) return;
-        if (!ValidateGhost()) return;
-
-        Vector3 pos = FootprintCenterWorld(gx, gz, 1, 1);
-        var go = Instantiate(carSpawnerPrefab, pos, Quaternion.Euler(0f, yaw, 0f));
-        spawned.Add(go);
-
-        spawnerCells[gx, gz] = true;
-
-        CancelCarSpawnerPlacement();
-    }
-
-    void Nudge(int dx, int dz)
-    {
-        if (!placingSpawner) return;
-
-        gx = Mathf.Clamp(gx + dx, 0, gridWidth - 1);
-        gz = Mathf.Clamp(gz + dz, 0, gridHeight - 1);
-
-        UpdateGhostTransform();
-        ValidateGhost();
-    }
-
-    // void RotateGhost()
-    // {
-    //     if (!placingSpawner) return;
-    //     yaw = (yaw + 90f) % 360f;
-    //     UpdateGhostTransform();
-    //     ValidateGhost();
-    // }
-
-    // Ghost visuals
-    void CreateGhost(GameObject prefab)
-    {
-        DestroyGhost();
-        spawnerGhost = Instantiate(prefab);
-        spawnerGhost.name = "[GHOST] CarSpawner";
-
-        foreach (var c in spawnerGhost.GetComponentsInChildren<Collider>(true))
-            c.enabled = false;
-
-        ghostRs.Clear();
-        spawnerGhost.GetComponentsInChildren(true, ghostRs);
-
-        ghostValidMats.Clear();
-        ghostInvalidMats.Clear();
-        foreach (var r in ghostRs)
+        int placed = 0;
+        for (int x = 0; x < gridWidth; x++)
         {
-            int n = r.sharedMaterials.Length;
-            var v = new Material[n];
-            var iv = new Material[n];
-            for (int i = 0; i < n; i++)
-            {
-                v[i] = new Material(ghostMaterial);
-                iv[i] = new Material(invalidMaterial);
-            }
-            ghostValidMats.Add(v);
-            ghostInvalidMats.Add(iv);
-            r.materials = v;
+            placed += TryPlaceSpawnerAtEdgeCell(x, 0) ? 1 : 0;
+            placed += TryPlaceSpawnerAtEdgeCell(x, gridHeight - 1) ? 1 : 0;
+        }
+        for (int z = 1; z < gridHeight - 1; z++)
+        {
+            placed += TryPlaceSpawnerAtEdgeCell(0, z) ? 1 : 0;
+            placed += TryPlaceSpawnerAtEdgeCell(gridWidth - 1, z) ? 1 : 0;
         }
 
-        usingInvalidLook = false;
-        float a0 = (pulseMinAlpha + pulseMaxAlpha) * 0.5f;
-        SetGhostAlpha(a0);
+        Debug.Log($"[TrafficSimulator] Auto-placed {placed} car spawners on edge roads.");
     }
 
-    void DestroyGhost()
+    bool TryPlaceSpawnerAtEdgeCell(int cx, int cz)
     {
-        if (spawnerGhost) Destroy(spawnerGhost);
-        spawnerGhost = null;
+        if (cx < 0 || cz < 0 || cx >= gridWidth || cz >= gridHeight) return false;
+        if (!roadCells[cx, cz] || spawnerCells[cx, cz]) return false;
 
-        ghostRs.Clear();
-        ghostValidMats.Clear();
-        ghostInvalidMats.Clear();
-        usingInvalidLook = false;
-        lastValid = false;
+        float yawDeg = roadYawDeg[cx, cz];
+        if (snapRoadYawToCardinals) yawDeg = SnapYawToCardinal(yawDeg);
+
+        Vector3 roadFwd = YawToForward(yawDeg);
+        Vector3 cellWorld = FootprintCenterWorld(cx, cz, 1, 1);
+        Vector3 toIntersection = intersectionCenterWorld - cellWorld;
+        toIntersection.y = 0f;
+
+        if (toIntersection.sqrMagnitude < 1e-6f) return false;
+        toIntersection.Normalize();
+
+        if (Vector3.Dot(roadFwd, toIntersection) < facingDotThreshold) return false;
+
+        Instantiate(carSpawnerPrefab, cellWorld, Quaternion.Euler(0f, yawDeg, 0f));
+        spawnerCells[cx, cz] = true;
+        return true;
     }
 
-    void UpdateGhostTransform()
+    static Vector3 YawToForward(float yawDeg)
     {
-        if (!spawnerGhost) return;
-        spawnerGhost.transform.position = FootprintCenterWorld(gx, gz, 1, 1);
-        spawnerGhost.transform.rotation = Quaternion.Euler(0f, yaw, 0f);
+        float rad = yawDeg * Mathf.Deg2Rad;
+        return new Vector3(Mathf.Sin(rad), 0f, Mathf.Cos(rad)).normalized;
     }
 
-    void ApplyValidLook()
+    static float SnapYawToCardinal(float yawDeg)
     {
-        if (!spawnerGhost) return;
-        for (int i = 0; i < ghostRs.Count; i++)
-            ghostRs[i].materials = ghostValidMats[i];
-
-        usingInvalidLook = false;
-        float a0 = (pulseMinAlpha + pulseMaxAlpha) * 0.5f;
-        SetGhostAlpha(a0);
-    }
-
-    void ApplyInvalidLook()
-    {
-        if (!spawnerGhost) return;
-        for (int i = 0; i < ghostRs.Count; i++)
-            ghostRs[i].materials = ghostInvalidMats[i];
-
-        usingInvalidLook = true;
-    }
-
-    void SetGhostAlpha(float a)
-    {
-        if (!spawnerGhost || usingInvalidLook) return;
-        foreach (var r in ghostRs)
+        yawDeg = Mathf.Repeat(yawDeg, 360f);
+        float[] card = { 0f, 90f, 180f, 270f };
+        float best = 0f, bestDist = float.MaxValue;
+        foreach (float c in card)
         {
-            foreach (var m in r.materials)
-            {
-                if (!m) continue;
-                if (m.HasProperty("_BaseColor"))
-                {
-                    var c = m.GetColor("_BaseColor"); c.a = a; m.SetColor("_BaseColor", c);
-                }
-                else if (m.HasProperty("_Color"))
-                {
-                    var c = m.GetColor("_Color"); c.a = a; m.SetColor("_Color", c);
-                }
-            }
+            float dist = Mathf.Abs(Mathf.DeltaAngle(yawDeg, c));
+            if (dist < bestDist) { bestDist = dist; best = c; }
         }
-    }
-
-    bool ValidateGhost()
-    {
-        bool valid = true;
-        valid &= gx >= 0 && gz >= 0 && gx < gridWidth && gz < gridHeight;
-
-        if (valid && !roadCells[gx, gz]) valid = false;
-        if (valid && spawnerCells[gx, gz]) valid = false;
-
-        if (valid != lastValid)
-        {
-            if (valid) ApplyValidLook();
-            else ApplyInvalidLook();
-            lastValid = valid;
-        }
-
-        if (confirmButton) confirmButton.interactable = valid;
-        return valid;
-    }
-
-    void WireButtons(bool enable)
-    {
-        upButton?.onClick.RemoveAllListeners();
-        downButton?.onClick.RemoveAllListeners();
-        leftButton?.onClick.RemoveAllListeners();
-        rightButton?.onClick.RemoveAllListeners();
-        // rotateButton?.onClick.RemoveAllListeners();
-        confirmButton?.onClick.RemoveAllListeners();
-        cancelButton?.onClick.RemoveAllListeners();
-
-        if (!enable) return;
-
-        upButton?.onClick.AddListener(() => Nudge(0, +1));
-        downButton?.onClick.AddListener(() => Nudge(0, -1));
-        leftButton?.onClick.AddListener(() => Nudge(-1, 0));
-        rightButton?.onClick.AddListener(() => Nudge(+1, 0));
-        // rotateButton?.onClick.AddListener(RotateGhost);
-        confirmButton?.onClick.AddListener(ConfirmCarSpawnerPlacement);
-        cancelButton?.onClick.AddListener(CancelCarSpawnerPlacement);
-    }
-
-    // --- UI VISIBILITY CONTROL ---
-    void SetControlButtonsVisible(bool visible)
-    {
-        if (upButton) upButton.gameObject.SetActive(visible);
-        if (downButton) downButton.gameObject.SetActive(visible);
-        if (leftButton) leftButton.gameObject.SetActive(visible);
-        if (rightButton) rightButton.gameObject.SetActive(visible);
-        // if (rotateButton) rotateButton.gameObject.SetActive(visible);
-        if (confirmButton) confirmButton.gameObject.SetActive(visible);
-        if (cancelButton) cancelButton.gameObject.SetActive(visible);
+        return best;
     }
 }

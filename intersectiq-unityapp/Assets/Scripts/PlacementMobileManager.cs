@@ -96,7 +96,7 @@ public class PlacementMobileManager : MonoBehaviour
     private Vector3 ghostBaseScale = Vector3.one;
 
     // ================================
-    // == Placement Recording (NEW) ==
+    // == Placement Recording ==
     // ================================
     [Serializable]
     public class PlacedItem
@@ -109,7 +109,6 @@ public class PlacementMobileManager : MonoBehaviour
         [NonSerialized] public GameObject instance; // runtime only
     }
 
-    // Save file root
     [Serializable]
     public class PlacementSave
     {
@@ -119,11 +118,16 @@ public class PlacementMobileManager : MonoBehaviour
         public List<PlacedItem> items = new List<PlacedItem>();
     }
 
-    // Stored placements (in order of placement)
     private readonly List<PlacedItem> placedItems = new List<PlacedItem>();
-
-    // Fast lookup of which item occupies a cell (null if none)
     private PlacedItem[,] cellOwner;
+
+    // === EDGE-OF-CENTER ROADS & AUTO-FILL ===
+    // For road validation we’ll compute which outward direction applies, if any.
+    // (dx,dz) will be one of (0,1),(0,-1),(1,0),(-1,0) meaning from center -> road cell.
+    private int edgeOutDX = 0, edgeOutDZ = 0; // cached during ValidateGhost
+
+    // Rotate toggles facing. When false (towards), extension grows behind (away from center).
+    private bool roadFacesAway = true;
 
     void Awake()
     {
@@ -264,6 +268,9 @@ public class PlacementMobileManager : MonoBehaviour
         // Determine if this prefab requires connection to the network (i.e., is a road)
         currentRequiresConn = currentPrefab && currentPrefab.GetComponent<RequiresCenterConnection>() != null;
 
+        // Reset road facing toggle for new road placement
+        if (currentRequiresConn) roadFacesAway = true;
+
         CreateGhost(currentPrefab);
 
         gx = Mathf.Clamp(gridWidth / 2, 0, gridWidth - 1);
@@ -325,51 +332,127 @@ public class PlacementMobileManager : MonoBehaviour
         if (!isPlacing || ghostInstance == null) return;
         if (!ValidateGhost()) return;
 
-        // Spawn
-        Vector3 spawnPos = FootprintCenterWorld(gx, gz, footprintW, footprintH);
-        var real = Instantiate(currentPrefab, spawnPos, Quaternion.Euler(0f, yaw, 0f));
-
-        // Scale center footprint
-        bool isCenter = currentIsCenter;
-        if (isCenter)
+        // Spawn: Center
+        if (currentIsCenter)
         {
+            Vector3 spawnPos = FootprintCenterWorld(gx, gz, footprintW, footprintH);
+            var real = Instantiate(currentPrefab, spawnPos, Quaternion.Euler(0f, yaw, 0f));
+
             var s = real.transform.localScale;
             real.transform.localScale = new Vector3(s.x * footprintW, s.y, s.z * footprintH);
 
             centerPlaced = true;
             if (placeCenterButton) placeCenterButton.interactable = false;
-        }
 
-        // Mark cells occupied
-        for (int x = 0; x < footprintW; x++)
-            for (int z = 0; z < footprintH; z++)
-                occupied[gx + x, gz + z] = true;
-
-        // Grow the connected network
-        bool addToNetwork = isCenter || currentRequiresConn;
-        if (addToNetwork)
-        {
+            // Mark cells occupied + network
             for (int x = 0; x < footprintW; x++)
                 for (int z = 0; z < footprintH; z++)
-                    network[gx + x, gz + z] = true;
+                {
+                    occupied[gx + x, gz + z] = true;
+                    network[gx + x, gz + z]  = true;
+                }
+
+            // Record placement
+            var rec = new PlacedItem
+            {
+                prefabName = currentPrefab ? currentPrefab.name : "Unknown",
+                isCenter = true,
+                x = gx, z = gz,
+                w = footprintW, h = footprintH,
+                yaw = yaw,
+                instance = real
+            };
+            placedItems.Add(rec);
+            for (int x = 0; x < footprintW; x++)
+                for (int z = 0; z < footprintH; z++)
+                    cellOwner[gx + x, gz + z] = rec;
+
+            EndPlacement();
+            return;
         }
 
-        // Record placement (NEW)
-        var rec = new PlacedItem
+        // === EDGE-OF-CENTER ROADS & AUTO-FILL ===
+        if (currentRequiresConn)
         {
-            prefabName = currentPrefab ? currentPrefab.name : "Unknown",
-            isCenter = isCenter,
-            x = gx, z = gz,
-            w = footprintW, h = footprintH,
-            yaw = yaw,
-            instance = real
-        };
-        placedItems.Add(rec);
-        for (int x = 0; x < footprintW; x++)
-            for (int z = 0; z < footprintH; z++)
-                cellOwner[gx + x, gz + z] = rec;
+            // edgeOutDX/edgeOutDZ points AWAY from the center (computed in ValidateGhost)
+            // Extension should ALWAYS go AWAY to the grid edge.
+            int extDirX = edgeOutDX;
+            int extDirZ = edgeOutDZ;
 
-        EndPlacement();
+            // Rotation of tiles depends on facing:
+            // - Away: yaw faces outward (same as extension direction)
+            // - Toward: yaw faces inward (toward center), but we still extend outward (behind the first tile)
+            float yawForTiles = roadFacesAway
+                ? DirectionToYaw(edgeOutDX, edgeOutDZ)      // facing away
+                : DirectionToYaw(-edgeOutDX, -edgeOutDZ);   // facing toward
+
+            PlaceRoadLineFromIncludingStart(gx, gz, extDirX, extDirZ, yawForTiles, currentPrefab);
+            EndPlacement();
+            return;
+        }
+
+        // Non-road, non-center (default behavior)
+        {
+            Vector3 spawnPos = FootprintCenterWorld(gx, gz, footprintW, footprintH);
+            var real = Instantiate(currentPrefab, spawnPos, Quaternion.Euler(0f, yaw, 0f));
+
+            for (int x = 0; x < footprintW; x++)
+                for (int z = 0; z < footprintH; z++)
+                    occupied[gx + x, gz + z] = true;
+
+            var rec = new PlacedItem
+            {
+                prefabName = currentPrefab ? currentPrefab.name : "Unknown",
+                isCenter = false,
+                x = gx, z = gz,
+                w = footprintW, h = footprintH,
+                yaw = yaw,
+                instance = real
+            };
+            placedItems.Add(rec);
+            for (int x = 0; x < footprintW; x++)
+                for (int z = 0; z < footprintH; z++)
+                    cellOwner[gx + x, gz + z] = rec;
+
+            EndPlacement();
+        }
+    }
+
+    // === EDGE-OF-CENTER ROADS & AUTO-FILL ===
+    // Places starting tile and extends in (dirX,dirZ) until grid edge or obstruction.
+    void PlaceRoadLineFromIncludingStart(int startX, int startZ, int dirX, int dirZ, float yawDeg, GameObject roadPrefab)
+    {
+        int x = startX;
+        int z = startZ;
+
+        while (x >= 0 && x < gridWidth && z >= 0 && z < gridHeight)
+        {
+            // Stop if this cell is already occupied
+            if (occupied[x, z]) break;
+
+            // Spawn one road tile here
+            Vector3 pos = FootprintCenterWorld(x, z, 1, 1);
+            var inst = Instantiate(roadPrefab, pos, Quaternion.Euler(0f, yawDeg, 0f));
+
+            occupied[x, z] = true;
+            network[x, z]  = true;
+
+            var rec = new PlacedItem
+            {
+                prefabName = roadPrefab.name,
+                isCenter = false,
+                x = x, z = z,
+                w = 1, h = 1,
+                yaw = yawDeg,
+                instance = inst
+            };
+            placedItems.Add(rec);
+            cellOwner[x, z] = rec;
+
+            // advance
+            x += dirX;
+            z += dirZ;
+        }
     }
 
     // Ghost
@@ -447,6 +530,22 @@ public class PlacementMobileManager : MonoBehaviour
 
     void RotateGhost()
     {
+        // For roads, toggle facing (away <-> towards), and resnap yaw based on new facing.
+        if (currentRequiresConn)
+        {
+            roadFacesAway = !roadFacesAway;  // toggle
+            if (TryGetAdjacentCenterDirection(gx, gz, out edgeOutDX, out edgeOutDZ))
+            {
+                int dirXVis = roadFacesAway ? edgeOutDX : -edgeOutDX; // what the user sees
+                int dirZVis = roadFacesAway ? edgeOutDZ : -edgeOutDZ;
+                yaw = DirectionToYaw(dirXVis, dirZVis);
+                UpdateGhostTransform();
+                ValidateGhost();
+            }
+            return;
+        }
+
+        // Non-roads: normal 90° rotation
         yaw = (yaw + 90f) % 360f;
         UpdateGhostTransform();
         ValidateGhost();
@@ -469,6 +568,7 @@ public class PlacementMobileManager : MonoBehaviour
     bool ValidateGhost()
     {
         bool valid = true;
+        edgeOutDX = edgeOutDZ = 0;
 
         // Bounds
         valid &= gx >= 0 && gz >= 0 &&
@@ -487,6 +587,26 @@ public class PlacementMobileManager : MonoBehaviour
         if (valid && currentIsCenter && centerPlaced)
             valid = false;
 
+        // === EDGE-OF-CENTER ONLY for roads ===
+        if (valid && currentRequiresConn)
+        {
+            // Must be exactly 1x1 and directly adjacent to a center cell (no diagonals)
+            if (footprintW != 1 || footprintH != 1) valid = false;
+            else
+            {
+                if (!TryGetAdjacentCenterDirection(gx, gz, out edgeOutDX, out edgeOutDZ))
+                    valid = false;
+                else
+                {
+                    // Snap yaw to what the user should see (toward/away)
+                    int dirXVis = roadFacesAway ? edgeOutDX : -edgeOutDX;
+                    int dirZVis = roadFacesAway ? edgeOutDZ : -edgeOutDZ;
+                    yaw = DirectionToYaw(dirXVis, dirZVis);
+                    UpdateGhostTransform();
+                }
+            }
+        }
+
         // Physics overlap (already placed objects using layer)
         if (valid)
         {
@@ -502,15 +622,6 @@ public class PlacementMobileManager : MonoBehaviour
             if (hitCount > 0) valid = false;
         }
 
-        // Roads must connect to the intersection-grown network
-        if (valid && currentRequiresConn)
-        {
-            // Cannot place roads before the center exists
-            if (!centerPlaced) valid = false;
-            // Must be edge-adjacent to any network cell (no diagonals)
-            else if (!IsAdjacentToNetwork(gx, gz, footprintW, footprintH)) valid = false;
-        }
-
         if (valid != lastValid)
         {
             if (valid) ApplyValidLook();
@@ -523,23 +634,36 @@ public class PlacementMobileManager : MonoBehaviour
     }
 
     // 4-neighbour adjacency check (no diagonals) around the footprint
-    bool IsAdjacentToNetwork(int x0, int z0, int w, int h)
+    // Returns outward direction from center -> this cell via dx,dz
+    bool TryGetAdjacentCenterDirection(int x, int z, out int dx, out int dz)
     {
-        for (int x = x0; x < x0 + w; x++)
-        {
-            for (int z = z0; z < z0 + h; z++)
-            {
-                // Up
-                if (z + 1 < gridHeight && network[x, z + 1]) return true;
-                // Down
-                if (z - 1 >= 0 && network[x, z - 1]) return true;
-                // Right
-                if (x + 1 < gridWidth && network[x + 1, z]) return true;
-                // Left
-                if (x - 1 >= 0 && network[x - 1, z]) return true;
-            }
-        }
+        dx = dz = 0;
+
+        // Our candidate cell (x,z) must be directly next to a center cell.
+        if (IsCenterCell(x, z - 1)) { dx = 0; dz = +1; return true; } // above center -> outward +Z
+        if (IsCenterCell(x, z + 1)) { dx = 0; dz = -1; return true; } // below center -> outward -Z
+        if (IsCenterCell(x - 1, z)) { dx = +1; dz = 0; return true; } // right of center -> outward +X
+        if (IsCenterCell(x + 1, z)) { dx = -1; dz = 0; return true; } // left of center  -> outward -X
+
         return false;
+    }
+
+    bool IsCenterCell(int x, int z)
+    {
+        if (x < 0 || z < 0 || x >= gridWidth || z >= gridHeight) return false;
+        var owner = cellOwner[x, z];
+        return owner != null && owner.isCenter;
+    }
+
+    float DirectionToYaw(int dx, int dz)
+    {
+        // Unity forward (+Z) => yaw 0
+        // (+X) => yaw 90, (-Z) => 180, (-X) => 270
+        if (dx == 1 && dz == 0) return 90f;
+        if (dx == -1 && dz == 0) return 270f;
+        if (dx == 0 && dz == 1) return 0f;
+        if (dx == 0 && dz == -1) return 180f;
+        return yaw; // fallback
     }
 
     void ApplyValidLook()
@@ -734,12 +858,10 @@ public class PlacementMobileManager : MonoBehaviour
             real.transform.localScale = new Vector3(s.x * w, s.y, s.z * h);
         }
 
-        // Occupancy
         for (int dx = 0; dx < w; dx++)
             for (int dz = 0; dz < h; dz++)
                 occupied[x0 + dx, z0 + dz] = true;
 
-        // Network growth: center OR roads (RequireCenterConnection marker)
         bool requiresConn = (!data.isCenter) && prefab.GetComponent<RequiresCenterConnection>() != null;
         if (data.isCenter || requiresConn)
         {

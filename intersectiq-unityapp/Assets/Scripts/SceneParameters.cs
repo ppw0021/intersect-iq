@@ -20,7 +20,7 @@ public static class SceneParameters
     {
         savedJson = jsonIN;
     }
-    
+
     // --- Latitude ---
     public static double GetCurrentLat()
     {
