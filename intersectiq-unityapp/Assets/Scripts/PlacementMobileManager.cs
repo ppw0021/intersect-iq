@@ -149,7 +149,7 @@ public class PlacementMobileManager : MonoBehaviour
         surfaceY = surfaceBounds.center.y;
 
         occupied = new bool[gridWidth, gridHeight];
-        network  = new bool[gridWidth, gridHeight];
+        network = new bool[gridWidth, gridHeight];
         cellOwner = new PlacedItem[gridWidth, gridHeight];
 
         WireButtons(false);
@@ -349,7 +349,7 @@ public class PlacementMobileManager : MonoBehaviour
                 for (int z = 0; z < footprintH; z++)
                 {
                     occupied[gx + x, gz + z] = true;
-                    network[gx + x, gz + z]  = true;
+                    network[gx + x, gz + z] = true;
                 }
 
             // Record placement
@@ -357,8 +357,10 @@ public class PlacementMobileManager : MonoBehaviour
             {
                 prefabName = currentPrefab ? currentPrefab.name : "Unknown",
                 isCenter = true,
-                x = gx, z = gz,
-                w = footprintW, h = footprintH,
+                x = gx,
+                z = gz,
+                w = footprintW,
+                h = footprintH,
                 yaw = yaw,
                 instance = real
             };
@@ -404,8 +406,10 @@ public class PlacementMobileManager : MonoBehaviour
             {
                 prefabName = currentPrefab ? currentPrefab.name : "Unknown",
                 isCenter = false,
-                x = gx, z = gz,
-                w = footprintW, h = footprintH,
+                x = gx,
+                z = gz,
+                w = footprintW,
+                h = footprintH,
                 yaw = yaw,
                 instance = real
             };
@@ -435,14 +439,16 @@ public class PlacementMobileManager : MonoBehaviour
             var inst = Instantiate(roadPrefab, pos, Quaternion.Euler(0f, yawDeg, 0f));
 
             occupied[x, z] = true;
-            network[x, z]  = true;
+            network[x, z] = true;
 
             var rec = new PlacedItem
             {
                 prefabName = roadPrefab.name,
                 isCenter = false,
-                x = x, z = z,
-                w = 1, h = 1,
+                x = x,
+                z = z,
+                w = 1,
+                h = 1,
                 yaw = yawDeg,
                 instance = inst
             };
@@ -754,8 +760,10 @@ public class PlacementMobileManager : MonoBehaviour
             {
                 prefabName = it.prefabName,
                 isCenter = it.isCenter,
-                x = it.x, z = it.z,
-                w = it.w, h = it.h,
+                x = it.x,
+                z = it.z,
+                w = it.w,
+                h = it.h,
                 yaw = it.yaw
             });
         }
@@ -799,7 +807,7 @@ public class PlacementMobileManager : MonoBehaviour
         // Rebuild
         ClearAllPlacements();
 
-        // Apply placements without validation (assume the save is authoritative)
+        // Apply placements without validation
         foreach (var data in loaded.items)
         {
             TryPlaceFromData(data);
@@ -824,14 +832,14 @@ public class PlacementMobileManager : MonoBehaviour
 
         // Reset occupancy/network/owners
         occupied = new bool[gridWidth, gridHeight];
-        network  = new bool[gridWidth, gridHeight];
+        network = new bool[gridWidth, gridHeight];
         cellOwner = new PlacedItem[gridWidth, gridHeight];
 
         // Reset center state
         centerPlaced = false;
     }
 
-    // Place a single item from save data (no validation UI).
+    // Place a single item from save data
     void TryPlaceFromData(PlacedItem data)
     {
         var prefab = ResolvePrefab(data);
@@ -875,8 +883,10 @@ public class PlacementMobileManager : MonoBehaviour
         {
             prefabName = data.prefabName,
             isCenter = data.isCenter,
-            x = x0, z = z0,
-            w = w, h = h,
+            x = x0,
+            z = z0,
+            w = w,
+            h = h,
             yaw = data.yaw,
             instance = real
         };
@@ -913,4 +923,75 @@ public class PlacementMobileManager : MonoBehaviour
         foreach (var it in placedItems) if (it.isCenter) return true;
         return false;
     }
+    public bool HasValidRoadConfiguration()
+    {
+        // Need a center first
+        if (!TryGetCenterRect(out int cx, out int cz, out int cw, out int ch))
+            return false;
+
+        // Center point in grid coords
+        Vector2 centerGrid = new Vector2(cx + cw * 0.5f, cz + ch * 0.5f);
+
+        int entries = 0;
+        int exits = 0;
+
+        foreach (var item in placedItems)
+        {
+            if (!IsRoadItem(item)) continue;
+
+            // Item center in grid coords
+            Vector2 itemCenter = new Vector2(item.x + item.w * 0.5f, item.z + item.h * 0.5f);
+
+            // Direction from center to this road
+            Vector2 fromCenter = (itemCenter - centerGrid);
+            if (fromCenter.sqrMagnitude < 1e-6f) continue;
+            fromCenter.Normalize();
+
+            // Road's forward from yaw
+            Vector3 f3 = YawToForward(item.yaw);
+            Vector2 roadFwd = new Vector2(f3.x, f3.z).normalized;
+
+            float dot = Vector2.Dot(roadFwd, fromCenter);
+            if (dot < -0.5f) entries++;
+            else if (dot > 0.5f) exits++;
+        }
+
+        return (entries >= 2 && exits >= 1);
+    }
+
+
+    private Vector3 YawToForward(float yaw)
+    {
+        float rad = yaw * Mathf.Deg2Rad;
+        return new Vector3(Mathf.Sin(rad), 0f, Mathf.Cos(rad)).normalized;
+    }
+    private bool TryGetCenterRect(out int cx, out int cz, out int cw, out int ch)
+    {
+        cx = cz = cw = ch = 0;
+        foreach (var it in placedItems)
+        {
+            if (it.isCenter)
+            {
+                cx = it.x;
+                cz = it.z;
+                cw = Mathf.Max(1, it.w);
+                ch = Mathf.Max(1, it.h);
+                return true;
+            }
+        }
+        return false;
+    }
+    private bool IsRoadItem(PlacedItem it)
+    {
+        if (it.isCenter) return false;
+        if (placeablePrefabs == null) return false;
+        foreach (var p in placeablePrefabs)
+        {
+            if (p && string.Equals(p.name, it.prefabName, StringComparison.Ordinal))
+                return p.GetComponent<RequiresCenterConnection>() != null;
+        }
+        return false;
+    }
+
+
 }

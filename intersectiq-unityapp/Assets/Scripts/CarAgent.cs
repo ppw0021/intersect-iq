@@ -37,8 +37,7 @@ public class CarAgent : MonoBehaviour
     [Tooltip("Downward ray length for intersection detection (m).")]
     public float centerCheckRayLength = 5f;
 
-    [Tooltip("If no reference set, will auto-find one in the scene on Start.")]
-    public TrafficSimulator trafficSimulator;
+    private TrafficSimulator trafficSimulator;
 
     [Tooltip("Distance at which we consider the car to have reached the chosen exit (m).")]
     public float exitArrivalDistance = 0.75f;
