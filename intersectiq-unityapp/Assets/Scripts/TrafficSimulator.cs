@@ -37,6 +37,39 @@ public class TrafficSimulator : MonoBehaviour
     [Range(-1f, 1f)]
     [SerializeField] private float facingDotThreshold = 0.5f;
 
+    // Blockers
+    [Header("Blockers")]
+    [Tooltip("Prefab placed on each road cell that ENTERS the intersection.")]
+    [SerializeField] private GameObject blockerPrefab;
+
+    [Tooltip("Start with blockers enabled when built.")]
+    [SerializeField] private bool blockersStartEnabled = true;
+
+    [Tooltip("Snap blocker yaw to 0/90/180/270.")]
+    [SerializeField] private bool snapBlockerYawToCardinals = true;
+
+    [Tooltip("How far to nudge the blocker TOWARD the intersection (as fraction of half-cell). 0..1.")]
+    [Range(0f, 1f)]
+    [SerializeField] private float blockerInwardNudgeFactor = 0.9f;
+
+    // Traffic lights
+    [Header("Side Right Marker")]
+    [Tooltip("Prefab to place at the driver's RIGHT when facing the intersection (per side that has inward road).")]
+    [SerializeField] private GameObject sideRightPrefab;
+
+    [Tooltip("Rightward offset from the entry cell center as a fraction of half-cell size (0..1).")]
+    [Range(0f, 1f)]
+    [SerializeField] private float sideRightRightOffset = 0.45f;
+
+    [Tooltip("Inward offset (toward the center) as a fraction of half-cell size (0..1).")]
+    [Range(0f, 1f)]
+    [SerializeField] private float sideRightInwardOffset = 0.15f;
+
+    [Tooltip("Snap the right-side prefab yaw to 0/90/180/270.")]
+    [SerializeField] private bool sideRightSnapYawToCardinals = true;
+
+
+
     // Internals
     private Renderer surfaceRenderer;
     private Bounds surfaceBounds;
@@ -86,6 +119,12 @@ public class TrafficSimulator : MonoBehaviour
     private readonly List<ExitNode> exits = new List<ExitNode>();
     public IReadOnlyList<ExitNode> IntersectionExits => exits;
 
+    // Blocker collections per side
+    private readonly List<GameObject> blockersNorth = new List<GameObject>();
+    private readonly List<GameObject> blockersEast = new List<GameObject>();
+    private readonly List<GameObject> blockersSouth = new List<GameObject>();
+    private readonly List<GameObject> blockersWest = new List<GameObject>();
+
     void Awake()
     {
         if (!gridSurface)
@@ -117,8 +156,10 @@ public class TrafficSimulator : MonoBehaviour
     {
         foreach (var go in spawned)
             if (go) Destroy(go);
-
         spawned.Clear();
+
+        ClearAllBlockers();
+
         roadCells = new bool[gridWidth, gridHeight];
         spawnerCells = new bool[gridWidth, gridHeight];
         roadYawDeg = new float[gridWidth, gridHeight];
@@ -161,10 +202,10 @@ public class TrafficSimulator : MonoBehaviour
                 intersectionFound = true;
                 centerX0 = item.x;
                 centerZ0 = item.z;
-                centerW  = Mathf.Max(1, item.w);
-                centerH  = Mathf.Max(1, item.h);
+                centerW = Mathf.Max(1, item.w);
+                centerH = Mathf.Max(1, item.h);
 
-                intersectionCenterGrid  = new Vector2(item.x + item.w * 0.5f, item.z + item.h * 0.5f);
+                intersectionCenterGrid = new Vector2(item.x + item.w * 0.5f, item.z + item.h * 0.5f);
                 intersectionCenterWorld = FootprintCenterWorld(item.x, item.z, item.w, item.h);
             }
         }
@@ -172,17 +213,20 @@ public class TrafficSimulator : MonoBehaviour
         if (!intersectionFound)
         {
             Debug.LogWarning("[TrafficSimulator] No intersection found. Using grid midpoint as fallback.");
-            centerX0 = Mathf.Max(0, gridWidth  / 2 - 0);
+            centerX0 = Mathf.Max(0, gridWidth / 2 - 0);
             centerZ0 = Mathf.Max(0, gridHeight / 2 - 0);
-            centerW  = 1;
-            centerH  = 1;
+            centerW = 1;
+            centerH = 1;
 
-            intersectionCenterGrid  = new Vector2(gridWidth * 0.5f, gridHeight * 0.5f);
+            intersectionCenterGrid = new Vector2(gridWidth * 0.5f, gridHeight * 0.5f);
             intersectionCenterWorld = FootprintCenterWorld((int)intersectionCenterGrid.x, (int)intersectionCenterGrid.y, 1, 1);
         }
 
-        // build outward exit targets right after placing
+        // Build outward exit targets right after placing
         BuildIntersectionExits();
+
+        // Build inward blockers on entries
+        BuildIntersectionEntriesAndBlockers();
 
         AutoPlaceSpawnersOnEdges();
     }
@@ -294,13 +338,13 @@ public class TrafficSimulator : MonoBehaviour
 
         if (Vector3.Dot(roadFwd, toIntersection) < facingDotThreshold) return false;
 
-        Instantiate(carSpawnerPrefab, cellWorld, Quaternion.Euler(0f, yawDeg, 0f));
+        var sp = Instantiate(carSpawnerPrefab, cellWorld, Quaternion.Euler(0f, yawDeg, 0f));
+
         spawnerCells[cx, cz] = true;
         return true;
     }
 
     // Exit discovery
-
     private void BuildIntersectionExits()
     {
         exits.Clear();
@@ -329,7 +373,8 @@ public class TrafficSimulator : MonoBehaviour
 
             exits.Add(new ExitNode
             {
-                x = gx, z = gz,
+                x = gx,
+                z = gz,
                 world = world,
                 forward = fwd,
                 side = sideTag
@@ -337,23 +382,183 @@ public class TrafficSimulator : MonoBehaviour
         }
 
         // For each side, look at the ring of cells directly adjacent to the center footprint
-        // Left (West): cells at x = centerX0 - 1, z in [centerZ0 .. centerZ0+centerH-1]
         for (int z = centerZ0; z < centerZ0 + centerH; z++)
             TryAddExit(centerX0 - 1, z, new Vector3(-1, 0, 0), "West");
 
-        // Right (East): cells at x = centerX0 + centerW
         for (int z = centerZ0; z < centerZ0 + centerH; z++)
             TryAddExit(centerX0 + centerW, z, new Vector3(1, 0, 0), "East");
 
-        // Bottom (South): cells at z = centerZ0 - 1, x in [centerX0 .. centerX0+centerW-1]
         for (int x = centerX0; x < centerX0 + centerW; x++)
             TryAddExit(x, centerZ0 - 1, new Vector3(0, 0, -1), "South");
 
-        // Top (North): cells at z = centerZ0 + centerH
         for (int x = centerX0; x < centerX0 + centerW; x++)
             TryAddExit(x, centerZ0 + centerH, new Vector3(0, 0, 1), "North");
 
         Debug.Log($"[TrafficSimulator] Found {exits.Count} intersection exits.");
+    }
+
+    // Entry discovery + blocker placement
+    private void BuildIntersectionEntriesAndBlockers()
+    {
+        ClearAllBlockers();
+        if (!blockerPrefab)
+        {
+            Debug.LogWarning("[TrafficSimulator] Blockers not built: blockerPrefab not assigned.");
+            return;
+        }
+
+        float cellX = surfaceBounds.size.x / gridWidth;
+        float cellZ = surfaceBounds.size.z / gridHeight;
+
+        // Track whether each side has at least one inward entry
+        bool hasWest = false, hasEast = false, hasSouth = false, hasNorth = false;
+        Vector3 westCellWorld = default, eastCellWorld = default, southCellWorld = default, northCellWorld = default;
+
+        // inward vectors (toward the center) for the ring of cells around the center
+        // West ring cells are at x = centerX0 - 1 -> inward is +X (1,0,0)
+        // East ring cells are at x = centerX0 + centerW -> inward is -X (-1,0,0)
+        // South ring cells are at z = centerZ0 - 1 -> inward is +Z (0,0,1)
+        // North ring cells are at z = centerZ0 + centerH -> inward is -Z (0,0,-1)
+
+        bool TryAddEntry(int gx, int gz, Vector3 inward, List<GameObject> sideList, out Vector3 entryCellWorld)
+        {
+            entryCellWorld = default;
+
+            if (gx < 0 || gz < 0 || gx >= gridWidth || gz >= gridHeight) return false;
+            if (!roadCells[gx, gz]) return false;
+
+            float yawDeg = roadYawDeg[gx, gz];
+            if (snapRoadYawToCardinals) yawDeg = SnapYawToCardinal(yawDeg);
+            Vector3 fwd = YawToForward(yawDeg);
+
+            // Road must roughly face inward (i.e., towards center)
+            if (Vector3.Dot(fwd, inward) < 0.6f) return false;
+
+            // Base world at cell center
+            Vector3 world = FootprintCenterWorld(gx, gz, 1, 1);
+            entryCellWorld = world;
+
+            // Nudge TOWARD the intersection (so it sits at the mouth)
+            Vector3 halfInward = new Vector3(inward.x * (cellX * 0.5f), 0f, inward.z * (cellZ * 0.5f));
+            world += halfInward * Mathf.Clamp01(blockerInwardNudgeFactor);
+
+            // Face into the intersection (same direction as 'inward')
+            float yawBlocker = Mathf.Atan2(inward.x, inward.z) * Mathf.Rad2Deg;
+            if (snapBlockerYawToCardinals) yawBlocker = SnapYawToCardinal(yawBlocker);
+
+            var blocker = Instantiate(blockerPrefab, world, Quaternion.Euler(0f, yawBlocker, 0f));
+            blocker.SetActive(blockersStartEnabled);
+            sideList.Add(blocker);
+
+            return true;
+        }
+
+        // WEST side entries (cells to the immediate west of the center footprint) -> inward +X
+        for (int z = centerZ0; z < centerZ0 + centerH; z++)
+        {
+            if (TryAddEntry(centerX0 - 1, z, new Vector3(1, 0, 0), blockersWest, out var cw))
+            {
+                hasWest = true;
+                westCellWorld = cw;
+            }
+        }
+
+        // EAST side entries -> inward -X
+        for (int z = centerZ0; z < centerZ0 + centerH; z++)
+        {
+            if (TryAddEntry(centerX0 + centerW, z, new Vector3(-1, 0, 0), blockersEast, out var cw))
+            {
+                hasEast = true;
+                eastCellWorld = cw;
+            }
+        }
+
+        // SOUTH side entries -> inward +Z
+        for (int x = centerX0; x < centerX0 + centerW; x++)
+        {
+            if (TryAddEntry(x, centerZ0 - 1, new Vector3(0, 0, 1), blockersSouth, out var cw))
+            {
+                hasSouth = true;
+                southCellWorld = cw;
+            }
+        }
+
+        // NORTH side entries -> inward -Z
+        for (int x = centerX0; x < centerX0 + centerW; x++)
+        {
+            if (TryAddEntry(x, centerZ0 + centerH, new Vector3(0, 0, -1), blockersNorth, out var cw))
+            {
+                hasNorth = true;
+                northCellWorld = cw;
+            }
+        }
+
+        Debug.Log($"[TrafficSimulator] Built blockers: N={blockersNorth.Count} E={blockersEast.Count} S={blockersSouth.Count} W={blockersWest.Count}");
+
+        // ---- Place the "right side" prefab (one per side with an inward entry) ----
+        if (!sideRightPrefab) return; // optional
+
+        void PlaceSideRightAt(Vector3 entryCellCenter, Vector3 inward)
+        {
+            // Right vector relative to the approach (driver's right while facing inward)
+            Vector3 right = Vector3.Cross(inward, Vector3.up).normalized;
+
+            // Scale offsets separately on X/Z so it works for rectangular cells
+            float rightStep = (Mathf.Abs(right.x) > 0.5f ? cellX : cellZ) * 0.5f * Mathf.Clamp01(sideRightRightOffset);
+            float inwardStep = (Mathf.Abs(inward.x) > 0.5f ? cellX : cellZ) * 0.5f * Mathf.Clamp01(sideRightInwardOffset);
+
+            Vector3 pos = entryCellCenter
+                        + right * rightStep
+                        + inward * inwardStep;
+
+            // lock Y to surface height
+            pos.y = surfaceY + heightOffset;
+
+            float yaw = Mathf.Atan2(inward.x, inward.z) * Mathf.Rad2Deg;
+            if (sideRightSnapYawToCardinals) yaw = SnapYawToCardinal(yaw);
+
+            Instantiate(sideRightPrefab, pos, Quaternion.Euler(0f, yaw, 0f));
+        }
+
+        // WEST: inward +X, right = +Z
+        if (hasWest) PlaceSideRightAt(westCellWorld, new Vector3(1, 0, 0));
+
+        // EAST: inward -X, right = -Z
+        if (hasEast) PlaceSideRightAt(eastCellWorld, new Vector3(-1, 0, 0));
+
+        // SOUTH: inward +Z, right = +X
+        if (hasSouth) PlaceSideRightAt(southCellWorld, new Vector3(0, 0, 1));
+
+        // NORTH: inward -Z, right = -X
+        if (hasNorth) PlaceSideRightAt(northCellWorld, new Vector3(0, 0, -1));
+    }
+
+    private void ClearAllBlockers()
+    {
+        foreach (var b in blockersNorth) if (b) Destroy(b);
+        foreach (var b in blockersEast) if (b) Destroy(b);
+        foreach (var b in blockersSouth) if (b) Destroy(b);
+        foreach (var b in blockersWest) if (b) Destroy(b);
+
+        blockersNorth.Clear();
+        blockersEast.Clear();
+        blockersSouth.Clear();
+        blockersWest.Clear();
+    }
+
+    // --- Public toggles you asked for ---
+    public void NorthBlocker(bool enable) => SetListActive(blockersNorth, enable);
+    public void EastBlocker(bool enable) => SetListActive(blockersEast, enable);
+    public void SouthBlocker(bool enable) => SetListActive(blockersSouth, enable);
+    public void WestBlocker(bool enable) => SetListActive(blockersWest, enable);
+
+    private static void SetListActive(List<GameObject> list, bool enable)
+    {
+        if (list == null) return;
+        for (int i = 0; i < list.Count; i++)
+        {
+            if (list[i]) list[i].SetActive(enable);
+        }
     }
 
     /// Pick any exit
@@ -379,7 +584,6 @@ public class TrafficSimulator : MonoBehaviour
         }
         return exits[bestIdx];
     }
-
 
     static Vector3 YawToForward(float yawDeg)
     {
@@ -419,6 +623,19 @@ public class TrafficSimulator : MonoBehaviour
         Gizmos.color = Color.cyan;
         Vector3 center = intersectionCenterWorld;
         Gizmos.DrawWireSphere(center, 0.2f);
+
+        // Visualize blockers (optional)
+        Gizmos.color = Color.red;
+        void DrawList(List<GameObject> list)
+        {
+            if (list == null) return;
+            foreach (var go in list)
+                if (go) Gizmos.DrawWireCube(go.transform.position, new Vector3(0.3f, 0.3f, 0.3f));
+        }
+        DrawList(blockersNorth);
+        DrawList(blockersEast);
+        DrawList(blockersSouth);
+        DrawList(blockersWest);
     }
 #endif
 }

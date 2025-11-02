@@ -4,6 +4,8 @@ using System.Collections.Generic;
 [DisallowMultipleComponent]
 public class CarAgent : MonoBehaviour
 {
+    [Header("Do not record statistics")]
+    public bool noStatistics = false;
     [Header("Movement Settings")]
     [Tooltip("Cruise speed when path is clear (m/s).")]
     public float cruiseSpeed = 6f;
