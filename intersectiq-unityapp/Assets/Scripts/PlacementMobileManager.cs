@@ -365,7 +365,7 @@ public class PlacementMobileManager : MonoBehaviour
             return;
         }
 
-        // === EDGE-OF-CENTER ROADS & AUTO-FILL ===
+        // EDGE-OF-CENTER ROADS & AUTO-FILL
         if (currentRequiresConn)
         {
             // edgeOutDX/edgeOutDZ points AWAY from the center (computed in ValidateGhost)
@@ -733,8 +733,8 @@ public class PlacementMobileManager : MonoBehaviour
     }
 
     // JSON Save / Load – API
-    /// Saves current placements to a pretty-printed JSON string.
-    /// Includes grid size and heightOffset for reference
+    // Saves current placements to a pretty-printed JSON string.
+    // Includes grid size and heightOffset for reference
     public string SavePlacementsToJson()
     {
         var save = new PlacementSave
@@ -763,8 +763,8 @@ public class PlacementMobileManager : MonoBehaviour
         return JsonUtility.ToJson(save, /*prettyPrint=*/true);
     }
 
-    /// Destroys current placed instances and rebuilds from the given JSON.
-    /// JSON must be created by SavePlacementsToJson().
+    // Destroys current placed instances and rebuilds from the given JSON.
+    // JSON must be created by SavePlacementsToJson().
     public void LoadPlacementsFromJson(string json)
     {
         if (string.IsNullOrWhiteSpace(json))

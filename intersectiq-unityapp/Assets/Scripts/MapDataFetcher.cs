@@ -50,7 +50,7 @@ public class MapDataFetcher : MonoBehaviour
         }
         var tex = DownloadHandlerTexture.GetContent(req);
         mapImage.texture = tex;
-        mapImage.SetNativeSize(); // optional
+        // mapImage.SetNativeSize(); // optional
     }
 
     IEnumerator LoadMapToRenderer(double lat, double lon, int mapStyle)
