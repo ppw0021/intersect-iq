@@ -107,7 +107,12 @@ public class PlacementMobileManager : MonoBehaviour
         public int gridWidth;
         public int gridHeight;
         public float heightOffset;
-        public List<PlacedItem> items = new List<PlacedItem>();
+
+        // New: map coordinates
+        public double latitude;
+        public double longitude;
+
+        public List<PlacedItem> items;
     }
 
     private readonly List<PlacedItem> placedItems = new List<PlacedItem>();
@@ -742,6 +747,11 @@ public class PlacementMobileManager : MonoBehaviour
             gridWidth = this.gridWidth,
             gridHeight = this.gridHeight,
             heightOffset = this.heightOffset,
+
+            // New: capture current map coordinates
+            latitude = SceneParameters.GetCurrentLat(),
+            longitude = SceneParameters.GetCurrentLong(),
+
             items = new List<PlacedItem>(placedItems.Count)
         };
 

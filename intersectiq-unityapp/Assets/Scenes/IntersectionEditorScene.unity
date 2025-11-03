@@ -2160,7 +2160,7 @@ MonoBehaviour:
     m_HorizontalOverflow: 0
     m_VerticalOverflow: 0
     m_LineSpacing: 1
-  m_Text: Home
+  m_Text: Exit and Save
 --- !u!222 &621345908
 CanvasRenderer:
   m_ObjectHideFlags: 0

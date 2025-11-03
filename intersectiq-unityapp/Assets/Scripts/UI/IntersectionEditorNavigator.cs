@@ -54,12 +54,37 @@ public class IntersectionEditorNavigator : MonoBehaviour
         homePanel_trafficSimButton.interactable = canSimulate;
     }
 
-    void homePanel_onHomeClick()
+    private void homePanel_onHomeClick()
     {
-        SceneParameters.SetSavedJSON(placementMobileManager.SavePlacementsToJson());
-        Debug.Log(SceneParameters.GetSavedJSON());
+        try
+        {
+            if (placementMobileManager != null)
+            {
+                string json = placementMobileManager.SavePlacementsToJson();
+
+                // Build full save path
+                string path = System.IO.Path.Combine(Application.persistentDataPath, "placements.json");
+
+                // Ensure folder exists and write file
+                System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(path));
+                System.IO.File.WriteAllText(path, json);
+
+                Debug.Log($"[IntersectionEditorNavigator] Saved placements JSON to disk: {path}");
+            }
+            else
+            {
+                Debug.LogWarning("[IntersectionEditorNavigator] placementMobileManager is null; skipping save.");
+            }
+        }
+        catch (System.Exception ex)
+        {
+            Debug.LogError($"[IntersectionEditorNavigator] Failed to save placements: {ex}");
+        }
+
+        // Now go back to the Start screen or home scene
         SceneManager.LoadScene("StartScreen");
     }
+
 
     void homePanel_onOverLayClick()
     {

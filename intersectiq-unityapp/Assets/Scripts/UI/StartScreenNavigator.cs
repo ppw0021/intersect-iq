@@ -1,7 +1,8 @@
 using UnityEngine;
 using UnityEngine.UI;
 using UnityEngine.SceneManagement;
-
+using System.IO;
+using System;
 
 public class StartScreenNavigator : MonoBehaviour
 {
@@ -18,7 +19,7 @@ public class StartScreenNavigator : MonoBehaviour
     [SerializeField] Button startMenu_newSaveButton;
     [SerializeField] Button startMenu_openSaveButton;
 
-    // Select Save Menu
+    // Select Save Menu (kept for now, but Open flows directly to scene)
     [Header("Select Save Menu")]
     [SerializeField] Button selectSaveMenu_returnButton;
     [SerializeField] Button selectSaveMenu_continueButton;
@@ -35,6 +36,35 @@ public class StartScreenNavigator : MonoBehaviour
     private double mapSetLatitude;
     private double mapSetLongitude;
 
+    [Serializable]
+    private class PlacementSave
+    {
+        public int gridWidth;
+        public int gridHeight;
+        public float heightOffset;
+
+        // Optional but supported: coordinates
+        public double latitude;
+        public double longitude;
+
+        // We don't need the full shape of items to set coords,
+        // but include it so JsonUtility is happy if present.
+        [Serializable]
+        public class PlacedItem
+        {
+            public string prefabName;
+            public bool isCenter;
+            public int x, z, w, h;
+            public float yaw;
+        }
+        public PlacedItem[] items;
+    }
+
+    private string GetSavePath()
+    {
+        return Path.Combine(Application.persistentDataPath, "placements.json");
+    }
+
     void Start()
     {
         fetcher = GetComponent<MapDataFetcher>();
@@ -45,7 +75,7 @@ public class StartScreenNavigator : MonoBehaviour
         startMenu_openSaveButton.onClick.AddListener(startMenu_OpenSaveButtonClicked);
         startMenu_newSaveButton.onClick.AddListener(startMenu_NewSaveButtonClicked);
 
-        // Select Save Buttons
+        // Select Save Buttons (legacy flow; not used by Open now)
         selectSaveMenu_returnButton.onClick.AddListener(selectSaveMenu_ReturnButtonClicked);
         selectSaveMenu_continueButton.onClick.AddListener(selectSaveMenu_ContinueButtonClicked);
 
@@ -54,13 +84,58 @@ public class StartScreenNavigator : MonoBehaviour
         newSaveMenu_returnButton.onClick.AddListener(newSaveMenu_ReturnButtonClicked);
         newSaveMenu_continueButton.onClick.AddListener(newSaveMenu_ContinueButtonClicked);
 
+        // Enable "Open Saved Intersection" only if the save file exists
+        string path = GetSavePath();
+        bool saveExists = File.Exists(path);
+        startMenu_openSaveButton.interactable = saveExists;
+
+        if (!saveExists)
+        {
+            Debug.Log($"[StartScreenNavigator] No save found at: {path}. 'Open Saved Intersection' disabled.");
+        }
     }
 
     // Start Menu Buttons
     void startMenu_OpenSaveButtonClicked()
     {
-        startMenu.SetActive(false);
-        selectSaveMenu.SetActive(true);
+        // Directly load the JSON from disk and jump to the editor scene
+        string path = GetSavePath();
+        if (!File.Exists(path))
+        {
+            Debug.LogWarning($"[StartScreenNavigator] Save not found at: {path}");
+            startMenu_openSaveButton.interactable = false;
+            return;
+        }
+
+        try
+        {
+            string json = File.ReadAllText(path);
+            if (string.IsNullOrWhiteSpace(json))
+            {
+                Debug.LogWarning("[StartScreenNavigator] Saved JSON is empty. Aborting open.");
+                return;
+            }
+
+            SceneParameters.SetSavedJSON(json);
+
+            var parsed = JsonUtility.FromJson<PlacementSave>(json);
+            if (parsed != null)
+            {
+                // if (!double.IsNaN(parsed.latitude) &&
+                //     !double.IsNaN(parsed.longitude) &&
+                //     (parsed.latitude != 0.0 || parsed.longitude != 0.0))
+                // {
+                SceneParameters.SetCurrentCoords(parsed.latitude, parsed.longitude);
+                // }
+            }
+
+            // Go to editor
+            SceneManager.LoadScene("IntersectionEditorScene");
+        }
+        catch (Exception ex)
+        {
+            Debug.LogError($"[StartScreenNavigator] Failed to open saved intersection: {ex}");
+        }
     }
 
     void startMenu_NewSaveButtonClicked()
@@ -69,22 +144,21 @@ public class StartScreenNavigator : MonoBehaviour
         newSaveMenu.SetActive(true);
     }
 
-    // Select Save Buttons
     void selectSaveMenu_ReturnButtonClicked()
     {
         startMenu.SetActive(true);
         selectSaveMenu.SetActive(false);
+
         // Reset select save menu
         newSaveMenu_errorMessage.text = "";
         newSaveMenu_latEntry.text = "";
         newSaveMenu_longEntry.text = "";
         newSaveMenu_continueButton.interactable = false;
-        fetcher.ResetRawImage();
+        if (fetcher) fetcher.ResetRawImage();
     }
 
     void selectSaveMenu_ContinueButtonClicked()
     {
-        // Load next scene
         Debug.Log(SceneParameters.GetSavedJSON());
         SceneManager.LoadScene("IntersectionEditorScene");
     }
@@ -104,7 +178,7 @@ public class StartScreenNavigator : MonoBehaviour
         {
             newSaveMenu_errorMessage.text = "Invalid Coordinates";
             Debug.LogWarning($"Invalid latitude: {latText}. Must be a number between -90 and 90.");
-            fetcher.ResetRawImage();
+            if (fetcher) fetcher.ResetRawImage();
             newSaveMenu_continueButton.interactable = false;
             return;
         }
@@ -114,7 +188,7 @@ public class StartScreenNavigator : MonoBehaviour
         {
             newSaveMenu_errorMessage.text = "Invalid Coordinates";
             Debug.LogWarning($"Invalid longitude: {lonText}. Must be a number between -180 and 180.");
-            fetcher.ResetRawImage();
+            if (fetcher) fetcher.ResetRawImage();
             newSaveMenu_continueButton.interactable = false;
             return;
         }
@@ -139,12 +213,14 @@ public class StartScreenNavigator : MonoBehaviour
     void newSaveMenu_ReturnButtonClicked()
     {
         startMenu.SetActive(true);
+
         // reset map and entry field here
         newSaveMenu_errorMessage.text = "";
         newSaveMenu_latEntry.text = "";
         newSaveMenu_longEntry.text = "";
         newSaveMenu_continueButton.interactable = false;
-        fetcher.ResetRawImage();
+        if (fetcher) fetcher.ResetRawImage();
+
         newSaveMenu.SetActive(false);
     }
 

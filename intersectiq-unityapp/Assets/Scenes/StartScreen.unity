@@ -374,7 +374,7 @@ GameObject:
   m_Component:
   - component: {fileID: 107211968}
   m_Layer: 0
-  m_Name: Pos2
+  m_Name: FrontPos2
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -1095,7 +1095,7 @@ GameObject:
   m_Component:
   - component: {fileID: 642503206}
   m_Layer: 0
-  m_Name: Pos1
+  m_Name: FrontPos1
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -2271,7 +2271,7 @@ GameObject:
   m_Component:
   - component: {fileID: 1224802305}
   m_Layer: 0
-  m_Name: Pos1 (1)
+  m_Name: RearPos2
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -3116,7 +3116,7 @@ GameObject:
   m_Component:
   - component: {fileID: 1536758282}
   m_Layer: 0
-  m_Name: Pos2 (1)
+  m_Name: RearPos1
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -3690,7 +3690,11 @@ PrefabInstance:
       objectReference: {fileID: 1224802305}
     - target: {fileID: 2131898020699514989, guid: 5dadfd9b8d6a5fd4fb08d637ae011461, type: 3}
       propertyPath: m_Name
-      value: StartScreenCar (1)
+      value: FrontCar
+      objectReference: {fileID: 0}
+    - target: {fileID: 2131898020699514989, guid: 5dadfd9b8d6a5fd4fb08d637ae011461, type: 3}
+      propertyPath: m_IsActive
+      value: 1
       objectReference: {fileID: 0}
     - target: {fileID: 6273340418325144092, guid: 5dadfd9b8d6a5fd4fb08d637ae011461, type: 3}
       propertyPath: m_LocalPosition.x
@@ -4843,7 +4847,11 @@ PrefabInstance:
       objectReference: {fileID: 107211968}
     - target: {fileID: 2131898020699514989, guid: 5dadfd9b8d6a5fd4fb08d637ae011461, type: 3}
       propertyPath: m_Name
-      value: StartScreenCar
+      value: RearCar
+      objectReference: {fileID: 0}
+    - target: {fileID: 2131898020699514989, guid: 5dadfd9b8d6a5fd4fb08d637ae011461, type: 3}
+      propertyPath: m_IsActive
+      value: 1
       objectReference: {fileID: 0}
     - target: {fileID: 6273340418325144092, guid: 5dadfd9b8d6a5fd4fb08d637ae011461, type: 3}
       propertyPath: m_LocalPosition.x
