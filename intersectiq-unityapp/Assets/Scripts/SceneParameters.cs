@@ -3,81 +3,55 @@ using UnityEngine.UI;
 
 public static class SceneParameters
 {
-    // Default params
     private static string savedJson = "";
     private static double currentLat = -36.918296;
     private static double currentLong = 174.935087;
     private static Renderer currentMapRenderer;
     private static RawImage currentMapImage;
 
-    // --- JSON ---
-    public static string GetSavedJSON()
-    {
-        return savedJson;
-    }
+    public static string GetSavedJSON() => savedJson;
+    public static void SetSavedJSON(string jsonIN) => savedJson = jsonIN;
 
-    public static void SetSavedJSON(string jsonIN)
-    {
-        savedJson = jsonIN;
-    }
+    public static double GetCurrentLat() => currentLat;
+    public static void SetCurrentLat(double value) => currentLat = value;
 
-    // --- Latitude ---
-    public static double GetCurrentLat()
-    {
-        return currentLat;
-    }
+    public static double GetCurrentLong() => currentLong;
+    public static void SetCurrentLong(double value) => currentLong = value;
 
-    public static void SetCurrentLat(double value)
-    {
-        currentLat = value;
-    }
-
-    // --- Longitude ---
-    public static double GetCurrentLong()
-    {
-        return currentLong;
-    }
-
-    public static void SetCurrentLong(double value)
-    {
-        currentLong = value;
-    }
-
-    // --- Both coordinates together ---
     public static void SetCurrentCoords(double lat, double lng)
     {
         currentLat = lat;
         currentLong = lng;
     }
 
-    // --- Map Renderer ---
-    public static Renderer GetCurrentMapRenderer()
-    {
-        return currentMapRenderer;
-    }
+    public static Renderer GetCurrentMapRenderer() => currentMapRenderer;
+    public static void SetCurrentMapRenderer(Renderer renderer) => currentMapRenderer = renderer;
 
-    public static void SetCurrentMapRenderer(Renderer renderer)
-    {
-        currentMapRenderer = renderer;
-    }
+    public static RawImage GetCurrentMapImage() => currentMapImage;
+    public static void SetCurrentMapImage(RawImage image) => currentMapImage = image;
 
-    // --- Map RawImage ---
-    public static RawImage GetCurrentMapImage()
-    {
-        return currentMapImage;
-    }
-
-    public static void SetCurrentMapImage(RawImage image)
-    {
-        currentMapImage = image;
-    }
-
-    // --- Optional convenience reset ---
     public static void ClearAll()
     {
         currentLat = 0;
         currentLong = 0;
         currentMapRenderer = null;
         currentMapImage = null;
+    }
+
+    // Only destroy CarAgents on the "Cars" layer, ignore others (like blockers)
+    public static void StartSimulation()
+    {
+        int carLayer = LayerMask.NameToLayer("Cars");
+        var agents = Object.FindObjectsOfType<CarAgent>();
+
+        foreach (var a in agents)
+        {
+            if (a.gameObject.layer == carLayer)
+                Object.Destroy(a.gameObject);
+        }
+
+        var spawners = Object.FindObjectsOfType<CarSpawnerNode>();
+        foreach (var s in spawners)
+            s.StartSpawning();
     }
 }

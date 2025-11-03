@@ -6,6 +6,7 @@ public class CarAgent : MonoBehaviour
 {
     [Header("Do not record statistics")]
     public bool noStatistics = false;
+
     [Header("Movement Settings")]
     [Tooltip("Cruise speed when path is clear (m/s).")]
     public float cruiseSpeed = 6f;
@@ -54,6 +55,10 @@ public class CarAgent : MonoBehaviour
     [Tooltip("If true, snap final heading to 0/90/180/270 to match grid roads.")]
     public bool snapYawToCardinals = true;
 
+    [Header("Statistics")]
+    [Tooltip("Speed (m/s) below which the car is considered stationary for timing.")]
+    public float stationarySpeedThreshold = 0.05f;
+
     // Internal state
     private float currentSpeed = 0f;
     private Vector3 travelDir = Vector3.forward;
@@ -67,6 +72,13 @@ public class CarAgent : MonoBehaviour
 
     // Cached list of all cars for efficiency
     private static List<CarAgent> allCars = new List<CarAgent>();
+
+    // Stats state
+    private float totalStationaryTime = 0f;
+    private float lifetimeTime = 0f;
+    private float totalDistance = 0f;
+    private Vector3 lastPosition;
+    private Vector3 startPosition;
 
     public void SetTravelDirection(Vector3 dir)
     {
@@ -85,6 +97,19 @@ public class CarAgent : MonoBehaviour
         hasChosenExit = false;
     }
 
+    // Reset statistics counters (does not affect routing)
+    public void ResetStatistics()
+    {
+        totalStationaryTime = 0f;
+        lifetimeTime = 0f;
+        totalDistance = 0f;
+        startPosition = transform.position;
+        lastPosition = transform.position;
+    }
+
+    // Accessors for statistics
+    public float GetTotalStationaryTimeSeconds() => totalStationaryTime;
+    public float GetAverageSpeedMetersPerSecond() => lifetimeTime > 0f ? totalDistance / lifetimeTime : 0f;
     void OnEnable()
     {
         allCars.Add(this);
@@ -107,6 +132,9 @@ public class CarAgent : MonoBehaviour
 
         if (travelDir.sqrMagnitude < 0.0001f)
             travelDir = transform.forward;
+
+        startPosition = transform.position;
+        lastPosition = transform.position;
     }
 
     void Update()
@@ -130,7 +158,7 @@ public class CarAgent : MonoBehaviour
             {
                 hasExitTarget = false;   // reached the exit point; realign to the road
                 desiredDir = exitTarget.forward;
-                AlignToExitRoad();       // <<< realign position + heading here
+                AlignToExitRoad();
             }
             else
             {
@@ -152,9 +180,28 @@ public class CarAgent : MonoBehaviour
         currentSpeed = Mathf.MoveTowards(currentSpeed, targetSpeed, rate * Time.deltaTime);
 
         // Move + orient
+        Vector3 prePos = transform.position;
         transform.position += travelDir * currentSpeed * Time.deltaTime;
         if (travelDir.sqrMagnitude > 0.0001f)
             transform.rotation = Quaternion.LookRotation(travelDir, Vector3.up);
+
+        // Statistics update
+        if (!noStatistics)
+        {
+            float dt = Time.deltaTime;
+            lifetimeTime += dt;
+
+            // Distance traveled this frame (actual path length)
+            float frameDist = Vector3.Distance(transform.position, lastPosition);
+            totalDistance += frameDist;
+            lastPosition = transform.position;
+
+            // Stationary time accumulation (use both speed and displacement to be robust)
+            bool effectivelyStopped = (currentSpeed <= stationarySpeedThreshold) &&
+                                      (Vector3.Distance(transform.position, prePos) <= stationarySpeedThreshold * dt * 0.5f);
+            if (effectivelyStopped)
+                totalStationaryTime += dt;
+        }
     }
 
     private void DetectCarsAhead()
@@ -197,14 +244,11 @@ public class CarAgent : MonoBehaviour
 
     private void DetectCenterBelow()
     {
-        // Only allow one direction change per car
         if (hasChosenExit) return;
 
-        // Cast a ray downward to see if the car is above a Center object
         Ray ray = new Ray(transform.position + Vector3.up * 0.5f, Vector3.down);
         if (Physics.Raycast(ray, out RaycastHit hit, centerCheckRayLength, centerLayerMask))
         {
-            // Only pick once, and only if simulator/exits are ready
             if (!hasExitTarget && trafficSimulator && trafficSimulator.IntersectionExits.Count > 0)
             {
                 if (trafficSimulator.TryGetRandomExit(out var exit))
@@ -225,28 +269,23 @@ public class CarAgent : MonoBehaviour
     // Alignment helpers
     private void AlignToExitRoad()
     {
-
         if (!hasChosenExit) return;
 
         Vector3 f = exitTarget.forward;
         if (f.sqrMagnitude < 1e-6f) return;
         f.Normalize();
 
-        // Height stays the same as current (assumes flat surface)
         Vector3 p0 = exitTarget.world + f * alignmentForwardOffset;
         p0.y = transform.position.y;
 
-        // Closest point on line through p0 with direction f
         Vector3 toP = transform.position - p0;
         toP.y = 0f;
         float t = Vector3.Dot(toP, f);
         Vector3 centerlinePoint = p0 + f * t;
 
-        // Lerp laterally to the centerline for a clean snap
         Vector3 newPos = Vector3.Lerp(transform.position, centerlinePoint, Mathf.Clamp01(lateralSnapStrength));
         transform.position = newPos;
 
-        // Set heading to road forward (with optional cardinal snap)
         Vector3 finalForward = f;
         if (snapYawToCardinals)
         {
@@ -278,15 +317,12 @@ public class CarAgent : MonoBehaviour
         return best;
     }
 
-    // For debugging
 #if UNITY_EDITOR
     void OnDrawGizmosSelected()
     {
-        // Car detection zone
         Gizmos.color = isBlocked ? Color.red : Color.green;
         Gizmos.DrawLine(transform.position, transform.position + transform.forward * detectionRange);
 
-        // Car detection width box
         Gizmos.color = new Color(0, 1, 1, 0.25f);
         Vector3 center = transform.position + transform.forward * (detectionRange * 0.5f);
         Vector3 size = new Vector3(laneWidth, 0.1f, detectionRange);
@@ -295,11 +331,9 @@ public class CarAgent : MonoBehaviour
         Gizmos.DrawWireCube(Vector3.zero, size);
         Gizmos.matrix = prev;
 
-        // Downward intersection ray
         Gizmos.color = Color.yellow;
         Gizmos.DrawLine(transform.position + Vector3.up * 0.5f, transform.position + Vector3.up * 0.5f + Vector3.down * centerCheckRayLength);
 
-        // Exit path and alignment preview
         if (hasExitTarget)
         {
             Gizmos.color = Color.magenta;
@@ -308,7 +342,6 @@ public class CarAgent : MonoBehaviour
             Gizmos.color = Color.white;
             Gizmos.DrawLine(exitTarget.world, exitTarget.world + exitTarget.forward * 1.0f);
 
-            // Alignment line
             Vector3 f = exitTarget.forward.normalized;
             Vector3 p0 = exitTarget.world + f * alignmentForwardOffset;
             p0.y = transform.position.y;

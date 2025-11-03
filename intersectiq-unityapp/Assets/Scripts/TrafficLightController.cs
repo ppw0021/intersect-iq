@@ -14,13 +14,17 @@ public class TrafficLightController : MonoBehaviour
     public TrafficLight southSignal;
     public TrafficLight westSignal;
 
+    [Header("Run Control")]
+    [Tooltip("If true, the controller starts cycling on Start(). Otherwise remains all-red until StartCycle() is called.")]
+    public bool autoStart = false;
+
     private TrafficSimulator trafficSimulator;
     private float timer;
     private int currentIndex = 0;   // index in the activePhases list
     private bool amberPhase;
     private bool allRedPhase;
+    private bool running;
 
-    // Track which directions actually exist (based on available signals)
     private readonly List<int> activePhases = new(); // 0=N, 1=E, 2=S, 3=W
 
     void Start()
@@ -33,11 +37,9 @@ public class TrafficLightController : MonoBehaviour
             return;
         }
 
-        // Auto-bind first if needed
         if (!northSignal || !eastSignal || !southSignal || !westSignal)
             AutoBindSignalsByPosition();
 
-        // Build active phases dynamically based on which lights exist
         if (northSignal) activePhases.Add(0);
         if (eastSignal)  activePhases.Add(1);
         if (southSignal) activePhases.Add(2);
@@ -51,12 +53,22 @@ public class TrafficLightController : MonoBehaviour
         }
 
         currentIndex = 0;
-        SetPhase(activePhases[currentIndex]);
-        timer = greenDuration;
+        amberPhase = false;
+        allRedPhase = false;
+
+        if (autoStart)
+            StartCycle();
+        else
+        {
+            running = false;
+            SetAllRed();
+        }
     }
 
     void Update()
     {
+        if (!running) return;
+
         timer -= Time.deltaTime;
         if (timer > 0f) return;
 
@@ -69,7 +81,6 @@ public class TrafficLightController : MonoBehaviour
         }
         else if (allRedPhase)
         {
-            // Move to next valid light
             currentIndex = (currentIndex + 1) % activePhases.Count;
             SetPhase(activePhases[currentIndex]);
             allRedPhase = false;
@@ -77,13 +88,48 @@ public class TrafficLightController : MonoBehaviour
         }
         else
         {
-            // From green → amber
             SetAmber();
             amberPhase = true;
             timer = amberDuration;
         }
     }
 
+    // Public controls
+    public void StartCycle()
+    {
+        if (activePhases.Count == 0) return;
+
+        running = true;
+        amberPhase = false;
+        allRedPhase = false;
+
+        // If we're already mid-cycle, keep currentIndex; otherwise ensure valid
+        currentIndex = Mathf.Clamp(currentIndex, 0, Mathf.Max(0, activePhases.Count - 1));
+
+        SetPhase(activePhases[currentIndex]);
+        timer = greenDuration;
+
+        Debug.Log("[TrafficLightController] Cycle started");
+    }
+
+    public void StopCycle()
+    {
+        running = false;
+        amberPhase = false;
+        allRedPhase = false;
+
+        SetAllRed();
+        Debug.Log("[TrafficLightController] Cycle stopped (all red)");
+    }
+
+    public void ToggleCycle()
+    {
+        if (running) StopCycle(); else StartCycle();
+    }
+
+    public bool IsRunning() => running;
+
+    // Internals
     private void SetPhase(int phase)
     {
         bool north = true, east = true, south = true, west = true;
@@ -96,7 +142,6 @@ public class TrafficLightController : MonoBehaviour
             case 3: west  = false; break;
         }
 
-        // Call simulator only if it exists
         if (trafficSimulator)
         {
             trafficSimulator.NorthBlocker(north);
@@ -105,7 +150,6 @@ public class TrafficLightController : MonoBehaviour
             trafficSimulator.WestBlocker(west);
         }
 
-        // Change lights (ignore missing ones)
         if (northSignal) northSignal.SetState(north ? LightState.Red : LightState.Green);
         if (eastSignal)  eastSignal.SetState(east  ? LightState.Red : LightState.Green);
         if (southSignal) southSignal.SetState(south ? LightState.Red : LightState.Green);
@@ -116,7 +160,6 @@ public class TrafficLightController : MonoBehaviour
 
     private void SetAmber()
     {
-        // Only change existing signals
         if (northSignal) northSignal.SetState(activePhases.Contains(0) && activePhases[currentIndex] == 0 ? LightState.Amber : LightState.Red);
         if (eastSignal)  eastSignal.SetState(activePhases.Contains(1) && activePhases[currentIndex] == 1 ? LightState.Amber : LightState.Red);
         if (southSignal) southSignal.SetState(activePhases.Contains(2) && activePhases[currentIndex] == 2 ? LightState.Amber : LightState.Red);

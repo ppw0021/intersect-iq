@@ -4,26 +4,17 @@ using UnityEngine;
 public class CarSpawnerNode : MonoBehaviour
 {
     [Header("Car Spawning")]
-    [Tooltip("The car prefab to spawn.")]
     public GameObject carPrefab;
-
-    [Tooltip("Vertical offset when spawning the car (to avoid clipping).")]
     public float spawnHeightOffset = 0.1f;
-
-    [Tooltip("Raycast distance downward to find the road under this spawner.")]
     public float downRayDistance = 5f;
-
-    [Tooltip("Layers considered 'road' for reading direction.")]
     public LayerMask roadMask;
-
-    [Tooltip("If true, quantize road forward to world-cardinal axes (+X,-X,+Z,-Z).")]
     public bool snapToCardinals = true;
 
     [Header("Respawn")]
-    [Tooltip("Time interval between each car spawn.")]
     [SerializeField] private float respawnDelay = 5f;
 
     private float respawnTimer;
+    private bool spawning = false;
 
     void Start()
     {
@@ -32,17 +23,32 @@ public class CarSpawnerNode : MonoBehaviour
 
     void Update()
     {
+        if (!spawning) return;
+
         respawnTimer -= Time.deltaTime;
         if (respawnTimer <= 0f)
         {
             TrySpawn();
-            respawnTimer = respawnDelay; // Reset timer for next spawn
+            respawnTimer = respawnDelay;
         }
+    }
+
+    public void StartSpawning()
+    {
+        spawning = true;
+        TrySpawn(); // spawn immediately when starting
+        respawnTimer = respawnDelay; // reset for next cycle
+    }
+
+    public void StopSpawning()
+    {
+        spawning = false;
     }
 
     public void ForceSpawnNow()
     {
         TrySpawn();
+        respawnTimer = respawnDelay;
     }
 
     private void TrySpawn()
@@ -53,14 +59,12 @@ public class CarSpawnerNode : MonoBehaviour
             return;
         }
 
-        // Find road under us
         if (!FindRoadBelow(out Vector3 roadForward))
         {
             Debug.LogWarning($"[CarSpawnerNode] No road detected under {name}. Cannot spawn.");
             return;
         }
 
-        // Optional cardinal snap
         if (snapToCardinals)
             roadForward = SnapToCardinal(roadForward);
 
@@ -70,22 +74,14 @@ public class CarSpawnerNode : MonoBehaviour
             return;
         }
 
-        // Spawn and align
         Vector3 pos = transform.position + Vector3.up * spawnHeightOffset;
         Quaternion rot = Quaternion.LookRotation(new Vector3(roadForward.x, 0f, roadForward.z), Vector3.up);
 
-        GameObject newCar = Instantiate(carPrefab, pos, rot);
+        GameObject newCar = Object.Instantiate(carPrefab, pos, rot);
 
-        // Initialize agent with travel direction if present
         var agent = newCar.GetComponent<CarAgent>();
         if (agent != null)
-        {
             agent.SetTravelDirection(roadForward.normalized);
-        }
-        else
-        {
-            Debug.LogWarning("[CarSpawnerNode] Spawned car has no CarAgent component.");
-        }
     }
 
     private bool FindRoadBelow(out Vector3 roadForward)
@@ -105,12 +101,9 @@ public class CarSpawnerNode : MonoBehaviour
     {
         v.y = 0f;
         if (v == Vector3.zero) return Vector3.zero;
-
         Vector3 n = v.normalized;
-        // Pick axis with largest magnitude
-        if (Mathf.Abs(n.x) > Mathf.Abs(n.z))
-            return new Vector3(Mathf.Sign(n.x), 0f, 0f);
-        else
-            return new Vector3(0f, 0f, Mathf.Sign(n.z));
+        return Mathf.Abs(n.x) > Mathf.Abs(n.z)
+            ? new Vector3(Mathf.Sign(n.x), 0f, 0f)
+            : new Vector3(0f, 0f, Mathf.Sign(n.z));
     }
 }
