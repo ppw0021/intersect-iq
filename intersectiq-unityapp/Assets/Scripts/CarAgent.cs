@@ -223,11 +223,10 @@ public class CarAgent : MonoBehaviour
     }
 
     // Alignment helpers
-
     private void AlignToExitRoad()
     {
 
-        if (!hasChosenExit) return; // sanity
+        if (!hasChosenExit) return;
 
         Vector3 f = exitTarget.forward;
         if (f.sqrMagnitude < 1e-6f) return;
@@ -279,6 +278,7 @@ public class CarAgent : MonoBehaviour
         return best;
     }
 
+    // For debugging
 #if UNITY_EDITOR
     void OnDrawGizmosSelected()
     {

@@ -1,13 +1,7 @@
 using System;
 using System.Collections.Generic;
 using UnityEngine;
-using UnityEngine.SceneManagement;
 using UnityEngine.UI;
-// Checks for legacy input system
-// #if ENABLE_INPUT_SYSTEM && !ENABLE_LEGACY_INPUT_MANAGER
-// using UnityEngine.InputSystem;
-// #endif
-
 public class PlacementMobileManager : MonoBehaviour
 {
     [Header("Surface")]
@@ -95,9 +89,7 @@ public class PlacementMobileManager : MonoBehaviour
 
     private Vector3 ghostBaseScale = Vector3.one;
 
-    // ================================
-    // == Placement Recording ==
-    // ================================
+    // Placement Recording
     [Serializable]
     public class PlacedItem
     {
@@ -121,7 +113,7 @@ public class PlacementMobileManager : MonoBehaviour
     private readonly List<PlacedItem> placedItems = new List<PlacedItem>();
     private PlacedItem[,] cellOwner;
 
-    // === EDGE-OF-CENTER ROADS & AUTO-FILL ===
+    // EDGE-OF-CENTER ROADS & AUTO-FILL
     // For road validation we’ll compute which outward direction applies, if any.
     // (dx,dz) will be one of (0,1),(0,-1),(1,0),(-1,0) meaning from center -> road cell.
     private int edgeOutDX = 0, edgeOutDZ = 0; // cached during ValidateGhost
@@ -422,7 +414,7 @@ public class PlacementMobileManager : MonoBehaviour
         }
     }
 
-    // === EDGE-OF-CENTER ROADS & AUTO-FILL ===
+    // EDGE-OF-CENTER ROADS & AUTO-FILL
     // Places starting tile and extends in (dirX,dirZ) until grid edge or obstruction.
     void PlaceRoadLineFromIncludingStart(int startX, int startZ, int dirX, int dirZ, float yawDeg, GameObject roadPrefab)
     {
@@ -551,7 +543,7 @@ public class PlacementMobileManager : MonoBehaviour
             return;
         }
 
-        // Non-roads: normal 90° rotation
+        // Non-roads: normal 90 degree rotation
         yaw = (yaw + 90f) % 360f;
         UpdateGhostTransform();
         ValidateGhost();
@@ -593,7 +585,7 @@ public class PlacementMobileManager : MonoBehaviour
         if (valid && currentIsCenter && centerPlaced)
             valid = false;
 
-        // === EDGE-OF-CENTER ONLY for roads ===
+        // EDGE-OF-CENTER ONLY for roads
         if (valid && currentRequiresConn)
         {
             // Must be exactly 1x1 and directly adjacent to a center cell (no diagonals)
@@ -992,6 +984,4 @@ public class PlacementMobileManager : MonoBehaviour
         }
         return false;
     }
-
-
 }

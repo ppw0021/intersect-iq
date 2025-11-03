@@ -495,8 +495,8 @@ public class TrafficSimulator : MonoBehaviour
 
         Debug.Log($"[TrafficSimulator] Built blockers: N={blockersNorth.Count} E={blockersEast.Count} S={blockersSouth.Count} W={blockersWest.Count}");
 
-        // ---- Place the "right side" prefab (one per side with an inward entry) ----
-        if (!sideRightPrefab) return; // optional
+        // Place the "right side" prefab (one per side with an inward entry)
+        if (!sideRightPrefab) return;
 
         void PlaceSideRightAt(Vector3 entryCellCenter, Vector3 inward)
         {
@@ -546,7 +546,6 @@ public class TrafficSimulator : MonoBehaviour
         blockersWest.Clear();
     }
 
-    // --- Public toggles you asked for ---
     public void NorthBlocker(bool enable) => SetListActive(blockersNorth, enable);
     public void EastBlocker(bool enable) => SetListActive(blockersEast, enable);
     public void SouthBlocker(bool enable) => SetListActive(blockersSouth, enable);

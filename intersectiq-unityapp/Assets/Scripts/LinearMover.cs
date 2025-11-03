@@ -7,6 +7,7 @@ public class LinearMover : MonoBehaviour
     public float speed = 2f;
     private bool toB = true;
 
+    // For moving cars on StartScreen
     void Update()
     {
         transform.position = Vector3.MoveTowards(transform.position, toB ? pointB.position : pointA.position, speed * Time.deltaTime);
